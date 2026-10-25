@@ -335,7 +335,7 @@ jobs:
             if ($null -eq $obj -and -not $a.StartsWith("-")) { $obj = $a; continue }
             $libs += $a
           }
-          & cl.exe /nologo $obj /link ("/OUT:" + $out) @libs
+          & cl.exe /nologo /MD $obj /link ("/OUT:" + $out) @libs
           exit $LASTEXITCODE
           '@ | Set-Content -Path (Join-Path $wrapDir "link.ps1") -Encoding ascii
           "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0link.ps1`" %*`r`n" |
