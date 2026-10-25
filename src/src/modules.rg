@@ -52,20 +52,58 @@ def env_value(name: str) -> str {
     return sh_output("printenv " + name, "/tmp/.rgc-env-" + name)
 }
 
+def sh_quote(s: str) -> str {
+    return "\"" + s + "\""
+}
+
+def windows_path(p: str) -> bool {
+    if p.len() >= 2 and p.char_at(1) == 58 {
+        return True
+    }
+    if p.len() >= 2 and p.char_at(0) == 92 and p.char_at(1) == 92 {
+        return True
+    }
+    return False
+}
+
+def slash_path(p: str) -> str {
+    out = ""
+    i = 0
+    while i < p.len() {
+        if p.char_at(i) == 92 {
+            out = out + "/"
+        } else {
+            out = out + p.slice(i, i + 1)
+        }
+        i = i + 1
+    }
+    return out
+}
+
 def compiler_exe() -> str {
     av = args()
     p = ""
     if av.len() > 0 {
         p = av.get(0)
     }
+    if windows_path(p) {
+        p = slash_path(p)
+    }
+    q = sh_quote(p)
     if str_find(p, "/") >= 0 {
-        r = sh_output("readlink -f " + p, "/tmp/.rgc-exe-path")
+        # readlink -f resolves symlinks on Linux; BSD readlink rejects -f, so keep p on failure.
+        r = sh_output("readlink -f " + q, "/tmp/.rgc-exe-path")
         if r.len() > 0 {
             return r
         }
         return p
     }
-    # Bare command name: the shell's parent is the compiler; resolve via /proc/<ppid>/exe.
+    # Bare command name: resolve through the shell's PATH search first (macOS has no /proc),
+    # then fall back to /proc/<ppid>/exe on Linux.
+    r = sh_output("command -v " + q, "/tmp/.rgc-exe-path")
+    if r.len() > 0 {
+        return r
+    }
     return sh_output("readlink /proc/$PPID/exe", "/tmp/.rgc-exe-path")
 }
 
