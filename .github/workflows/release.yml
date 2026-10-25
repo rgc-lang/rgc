@@ -223,7 +223,11 @@ jobs:
           ( cd src && bash tools/llvm-shim.sh )
           link_args="$(cat src/target/build/link-args)"
           if [ "$RUNNER_OS" = "macOS" ]; then
-            link_args="$link_args -stdlib=libc++ -lc++ -Wl,-rpath,/usr/lib"
+            # The LLVM archive ships its own libc++ dylibs next to the LLVM
+            # archives; searching the SDK first keeps -lc++ on the system
+            # runtime instead of the @rpath copy that fails to resolve.
+            sdk_lib="$(xcrun --show-sdk-path)/usr/lib"
+            link_args="-L$sdk_lib $link_args -stdlib=libc++ -lc++ -Wl,-rpath,/usr/lib"
           fi
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
             link_args="$link_args -fuse-ld=lld"
@@ -311,6 +315,8 @@ jobs:
           $env:LIB = "$toolLib;$libDir;$vcpkgLib;$env:LIB"
 
           # The compiler calls `g++` to link; translate that call to cl.exe.
+          # RGC objects carry no /DEFAULTLIB directives, so link.ps1 names the
+          # static CRT explicitly or programs link without printf/mainCRTStartup.
           $shim = Join-Path $env:RUNNER_TEMP "llvm_shim.obj"
           & cl.exe /nologo /c /O2 /MT /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
           if ($LASTEXITCODE -ne 0) { throw "failed to compile llvm_shim.cpp" }
@@ -322,12 +328,14 @@ jobs:
           $obj = $null; $out = $null; $libs = @()
           for ($i = 0; $i -lt $args.Count; $i++) {
             $a = $args[$i]
-            if ($a -eq "-g" -or $a -eq "-lm" -or $a -eq "-lpthread") { continue }
+            if ($a -eq "-g" -or $a -eq "-lm" -or $a -eq "-lpthread" -or $a -eq "-fPIC") { continue }
             if ($a -eq "-o") { $i++; $out = $args[$i]; continue }
+            if ($a -eq "-lws2_32") { $libs += "ws2_32.lib"; continue }
             if ($null -eq $obj -and -not $a.StartsWith("-")) { $obj = $a; continue }
             $libs += $a
           }
-          & cl.exe /nologo /MT $obj /link ("/OUT:" + $out) @libs
+          & cl.exe /nologo /MT $obj /link ("/OUT:" + $out) @libs `
+            libcmt.lib libucrt.lib libvcruntime.lib legacy_stdio_definitions.lib
           exit $LASTEXITCODE
           '@ | Set-Content -Path (Join-Path $wrapDir "link.ps1") -Encoding ascii
           "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0link.ps1`" %*`r`n" |
@@ -344,10 +352,25 @@ jobs:
           & "$root\rgc1.exe" src/src/main.rg --link-args $linkArgs -o "$root\rgc2.exe"
           if ($LASTEXITCODE -ne 0) { throw "rgc2 build failed" }
 
-          & "$root\rgc1.exe" src/src/main.rg --emit-llvm -o "$root\rgc1.ll"
-          if ($LASTEXITCODE -ne 0) { throw "rgc1 IR generation failed" }
-          & "$root\rgc2.exe" src/src/main.rg --emit-llvm -o "$root\rgc2.ll"
-          if ($LASTEXITCODE -ne 0) { throw "rgc2 IR generation failed" }
+          & "$root\rgc1.exe" examples\hello.rg --emit-llvm -o "$root\hello.ll"
+          $rc = $LASTEXITCODE
+          $size = if (Test-Path "$root\hello.ll") { (Get-Item "$root\hello.ll").Length } else { 0 }
+          Write-Host "hello IR: exit=$rc bytes=$size"
+          if ($rc -ne 0 -or $size -le 0) { throw "hello IR generation failed (exit=$rc)" }
+
+          foreach ($gen in @("rgc1", "rgc2")) {
+            $exe = "$root\$gen.exe"
+            $ll = "$root\$gen.ll"
+            $irLog = "$root\$gen-ir.log"
+            & $exe src/src/main.rg --emit-llvm -o $ll *> $irLog
+            $rc = $LASTEXITCODE
+            $size = if (Test-Path $ll) { (Get-Item $ll).Length } else { 0 }
+            Write-Host "$gen IR: exit=$rc bytes=$size"
+            if ($rc -ne 0 -or $size -le 0) {
+              if (Test-Path $irLog) { Get-Content $irLog -Tail 40 | ForEach-Object { Write-Host $_ } }
+              throw "$gen IR generation failed (exit=$rc)"
+            }
+          }
           if ((Get-FileHash "$root\rgc1.ll").Hash -ne (Get-FileHash "$root\rgc2.ll").Hash) {
             throw "rgc1/rgc2 IR mismatch"
           }
