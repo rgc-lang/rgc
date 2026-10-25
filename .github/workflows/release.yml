@@ -289,13 +289,15 @@ jobs:
               if ($name -like "-l*") { $name = $name.Substring(2) }
               if ($name -match '[\\/]') { $name = [IO.Path]::GetFileName($name) }
               if ($name -notlike "*.lib") { $name += ".lib" }
-              if ($name -match '^(zstd|libzstd|zlib|zs)') { continue }
+              if ($name -match '^(zstd|libzstd|zlib|zs|xml2|libxml2)') { continue }
               $out += $name
             }
             return $out
           }
           $libNames = Normalize-Libs $libNames
           $systemLibs = Normalize-Libs $systemLibs
+          Write-Host "LLVM libs: $($libNames -join ' ')"
+          Write-Host "LLVM system libs: $($systemLibs -join ' ')"
 
           $vcpkgLib = Join-Path $env:CMAKE_PREFIX_PATH "lib"
           $zlib = @("zs.lib", "zlib.lib", "zlibstatic.lib") |
