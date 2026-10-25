@@ -4,6 +4,7 @@
 #   rgc <file.rg> [-o <output>] [-O|-O2|-O0] [-g]   # compile and link directly
 #   rgc run <file.rg> [args...]     # compile and run
 #   rgc ast-dump <file.rg>          # parse only
+#   rgc <file.rg> --emit-exports <json>   # function metadata for binding generators (pyrig)
 #
 # rgc only compiles: test running lives in the toolchain (`rack test`, see ../rack).
 #
@@ -23,6 +24,7 @@ import ir
 import diag
 import modules
 import fmt
+import exports
 
 # Read file content; on failure continue with an empty source.
 public def read_source(path: str) -> str {
@@ -65,10 +67,11 @@ def render_sema_errors(loader: @var ModuleLoader, s: @var Sema, src_path: str, s
 
 # Compile and link. opt_level: 0=no optimization, 2=O2; debug_info: 1=emit DWARF.
 # emit_obj: generate an object file only, without linking (--emit-object);
-# shared_link: link as a shared library (--shared, used by pyrig to build Python extensions).
+# shared_link: link as a shared library (--shared, used by pyrig to build Python extensions);
+# exports_path: also write function metadata as JSON (--emit-exports, consumed by pyrig).
 public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
                      link_args: str, opt_level: int, debug_info: bool,
-                     emit_obj: bool, shared_link: bool) -> int {
+                     emit_obj: bool, shared_link: bool, exports_path: str) -> int {
     r0 = read_file(src_path)
     if not r0.is_ok() {
         write_stderr("error: cannot read " + src_path + "\n")
@@ -92,6 +95,12 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
         render_sema_errors(@var loader, @var s, src_path, src)
         write_stderr("compilation failed.\n")
         return 1
+    }
+
+    if exports_path.len() > 0 {
+        if exports_emit(exports_path, @stmts, src_path) != 0 {
+            return 1
+        }
     }
 
     g = make_irgen(@var s)
@@ -146,7 +155,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
 # Compile to a temporary file and run.
 public def run_program(src_path: str, extra_args: str) -> int {
     tmp = "/tmp/rgc_run"
-    rc = compile_and_link(src_path, tmp, False, "", 2, False, False, False)
+    rc = compile_and_link(src_path, tmp, False, "", 2, False, False, False, "")
     if rc != 0 {
         return 1
     }
@@ -199,6 +208,7 @@ public def main() -> int {
         print("  rgc <file.rg> [-o <output>]     # compile directly")
         print("  rgc <file.rg> --emit-object      # compile to object file")
         print("  rgc <file.rg> --shared           # compile to shared library")
+        print("  rgc <file.rg> --emit-exports <json>  # also write function metadata for binding generators")
         print("  rgc run <file.rg> [args...]     # compile & run with args")
         print("  rgc check <file.rg>             # type/borrow check only, no codegen")
         print("  rgc fmt <file.rg> [...] [--check]  # format in place; --check reports only")
@@ -289,6 +299,7 @@ public def main() -> int {
     link_args = ""
     opt_level = 2
     debug_info = False
+    exports_path = ""
     i = 2
     while i < argv.len() {
         if str_eq(argv.get(i), "-o") and i + 1 < argv.len() {
@@ -310,6 +321,11 @@ public def main() -> int {
             i = i + 2
             continue
         }
+        if str_eq(argv.get(i), "--emit-exports") and i + 1 < argv.len() {
+            exports_path = argv.get(i + 1)
+            i = i + 2
+            continue
+        }
         if str_eq(argv.get(i), "-O") or str_eq(argv.get(i), "-O2") {
             opt_level = 2
             i = i + 1
@@ -328,5 +344,5 @@ public def main() -> int {
         i = i + 1
     }
     return compile_and_link(src_path, output, emit_llvm, link_args, opt_level,
-                            debug_info, emit_obj, shared_link)
+                            debug_info, emit_obj, shared_link, exports_path)
 }

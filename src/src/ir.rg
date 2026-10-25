@@ -1927,7 +1927,17 @@ public def irg_codegen_binary(g: @var IRGen, e: Expr) -> str {
     if str_eq(e.op, "+") and (str_eq(lk, "str") or str_eq(rk, "str")) {
         l = irg_codegen_expr(g, e.lhs.get(0))
         r = irg_codegen_expr(g, e.rhs.get(0))
-        return irg_string_concat(g, l, r)
+        out = irg_string_concat(g, l, r)
+        # A nested operand is a buffer irg_string_concat just malloc'd. Its bytes have been copied
+        # out and nothing else names it, so it dies here; without this every non-final operand of a
+        # chain leaks one buffer per evaluation.
+        if irg_is_temp_concat(g, e.lhs.get(0)) {
+            irg_add(g, "call void @free(ptr " + l + ")")
+        }
+        if irg_is_temp_concat(g, e.rhs.get(0)) {
+            irg_add(g, "call void @free(ptr " + r + ")")
+        }
+        return out
     }
 
     # and / or: short-circuit evaluation, merging results in an alloca.
@@ -2119,6 +2129,21 @@ public def irg_materialize_ptr(g: @var IRGen, e: Expr, val: str, custom: str) ->
     irg_add(g, a + " = alloca " + ty)
     irg_add(g, "store " + ty + " " + val + ", ptr " + a)
     return a
+}
+
+# True when lowering this expression yields a throwaway concat buffer. A `+` whose result is a str
+# always goes through irg_string_concat, and an AST node is never shared, so the buffer it returns
+# is reachable only from the enclosing operation.
+def irg_is_temp_concat(g: @var IRGen, e: Expr) -> bool {
+    if not (e.kind == ExprBinary()) {
+        return False
+    }
+    if not str_eq(e.op, "+") {
+        return False
+    }
+    lk = irg_expr_kind(g, e.lhs.get(0))
+    rk = irg_expr_kind(g, e.rhs.get(0))
+    return str_eq(lk, "str") or str_eq(rk, "str")
 }
 
 # String concatenation s1 + s2.
@@ -2674,8 +2699,6 @@ public def irg_codegen_match(g: @var IRGen, e: Expr) -> str {
 public def irg_codegen_match_arm(g: @var IRGen, arm: MatchArm, enum_name: str, subj_ptr: str,
                           rty: str) -> str {
     if arm.pattern.kind == PatternVariant() {
-        kinds_all = g.enum_field_kinds.get(enum_name).split("|")
-        names_all = g.enum_field_names.get(enum_name).split("|")
         if arm.pattern.named_fields {
             # named patterns: locate the slot by field name.
             fnames = kinds_all_slot_names(g, enum_name, arm.pattern.name)
@@ -2693,7 +2716,7 @@ public def irg_codegen_match_arm(g: @var IRGen, arm: MatchArm, enum_name: str, s
                     j = j + 1
                 }
                 if sub.kind == PatternVar() and slot >= 0 {
-                    kinds = kinds_all.get(arm_variant_index(g, arm.pattern.name)).split(",")
+                    kinds = kinds_all_slot_kinds(g, enum_name, arm.pattern.name)
                     if slot < kinds.len() {
                         irg_bind_payload(g, sub.name, kinds.get(slot), enum_name, subj_ptr, slot)
                     }
@@ -2701,8 +2724,7 @@ public def irg_codegen_match_arm(g: @var IRGen, arm: MatchArm, enum_name: str, s
                 i = i + 1
             }
         } else {
-            v_idx = arm_variant_index(g, arm.pattern.name)
-            kinds = kinds_all.get(v_idx).split(",")
+            kinds = kinds_all_slot_kinds(g, enum_name, arm.pattern.name)
             i = 0
             while i < arm.pattern.fields.len() and i < kinds.len() {
                 sub = arm.pattern.fields.get(i)
@@ -2740,6 +2762,17 @@ public def kinds_all_slot_names(g: @var IRGen, enum_name: str, variant: str) -> 
     v_idx = arm_variant_index(g, variant)
     if v_idx < names_all.len() {
         return names_all.get(v_idx).split(",")
+    }
+    return List[str]()
+}
+
+# Variant slot kind list. A payload-less variant encodes as an empty segment and split() drops
+# empty segments, so the variant index has to be bounds-checked before it is used to index.
+public def kinds_all_slot_kinds(g: @var IRGen, enum_name: str, variant: str) -> List[str] {
+    kinds_all = g.enum_field_kinds.get(enum_name).split("|")
+    v_idx = arm_variant_index(g, variant)
+    if v_idx < kinds_all.len() {
+        return kinds_all.get(v_idx).split(",")
     }
     return List[str]()
 }

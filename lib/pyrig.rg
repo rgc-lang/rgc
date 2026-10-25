@@ -32,5 +32,5 @@ public def export_as(name: str, fn: str) -> None {
 }
 
 public def version() -> str {
-    return "0.1.0"
+    return "0.3.0"
 }
