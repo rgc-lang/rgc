@@ -42,13 +42,41 @@ public class ModuleLoader {
 # Note: files under /proc have ftell == 0 and cannot be read with read_file; use a shell redirect instead.
 
 def sh_output(cmd: str, path: str) -> str {
-    system(cmd + " > " + path + " 2>/dev/null")
-    v = trim(read_file_or(path))
-    remove_file(path)
+    tmp = path
+    if is_windows() {
+        tmp = ".rgc-sh-output.tmp"
+        system(cmd + " > " + tmp)
+    } else {
+        system(cmd + " > " + path + " 2>/dev/null")
+    }
+    v = trim(read_file_or(tmp))
+    remove_file(tmp)
     return v
 }
 
+def is_windows() -> bool {
+    av = args()
+    if av.len() == 0 {
+        return False
+    }
+    p = av.get(0)
+    if windows_path(p) {
+        return True
+    }
+    return str_find(p, "\\") >= 0
+}
+
 def env_value(name: str) -> str {
+    if is_windows() {
+        tmp = ".rgc-env.tmp"
+        system("echo %" + name + "% > " + tmp)
+        v = trim(read_file_or(tmp))
+        remove_file(tmp)
+        if v == "%" + name + "%" {
+            return ""
+        }
+        return v
+    }
     return sh_output("printenv " + name, "/tmp/.rgc-env-" + name)
 }
 
@@ -87,7 +115,7 @@ def compiler_exe() -> str {
         p = av.get(0)
     }
     if windows_path(p) {
-        p = slash_path(p)
+        return slash_path(p)
     }
     q = sh_quote(p)
     if str_find(p, "/") >= 0 {
