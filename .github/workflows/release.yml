@@ -185,9 +185,10 @@ jobs:
           path: ~/AppData/Local/rgc-llvm/archives
           key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.platform }}-windows-archive
 
-      - name: Cache vcpkg zlib/zstd
+      - name: Restore vcpkg zlib/zstd
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: C:\vcpkg\installed
           key: vcpkg-zlib-zstd-${{ matrix.platform }}-llvm-${{ env.LLVM_VERSION }}
@@ -212,6 +213,14 @@ jobs:
           "CMAKE_PREFIX_PATH=$vcpkg\installed\$triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_TRIPLET=$triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Save vcpkg zlib/zstd
+        if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-zlib-zstd-${{ matrix.platform }}-llvm-${{ env.LLVM_VERSION }}
 
       - name: Build self-hosted compiler (Unix)
         if: runner.os != 'Windows'
@@ -259,6 +268,9 @@ jobs:
             $i = $_.IndexOf("=")
             if ($i -gt 0) { Set-Item -Path ("env:" + $_.Substring(0, $i)) -Value $_.Substring($i + 1) }
           }
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+            throw "cl.exe not found after vcvarsall $arch"
+          }
 
           $llvmRoot = Split-Path (Split-Path (Split-Path $env:LLVM_DIR -Parent) -Parent) -Parent
           $llvmConfig = Join-Path $env:LLVM_BIN "llvm-config.exe"
@@ -283,14 +295,19 @@ jobs:
           $systemLibs = Normalize-Libs $systemLibs
 
           $vcpkgLib = Join-Path $env:CMAKE_PREFIX_PATH "lib"
-          $zlib = (Get-ChildItem $vcpkgLib -Filter "zlib*.lib" | Where-Object { $_.Name -notmatch 'd\.lib$' } | Select-Object -First 1).Name
-          $zstd = (Get-ChildItem $vcpkgLib -Filter "zstd*.lib" | Where-Object { $_.Name -notmatch 'd\.lib$' } | Select-Object -First 1).Name
-          if (-not $zlib -or -not $zstd) { throw "zlib/zstd libraries not found in $vcpkgLib" }
+          $zlib = @("zs.lib", "zlib.lib", "zlibstatic.lib") |
+            Where-Object { Test-Path (Join-Path $vcpkgLib $_) } | Select-Object -First 1
+          $zstd = @("zstd.lib", "zstd_static.lib", "libzstd.lib") |
+            Where-Object { Test-Path (Join-Path $vcpkgLib $_) } | Select-Object -First 1
+          if (-not $zlib -or -not $zstd) {
+            Get-ChildItem $vcpkgLib | Select-Object -ExpandProperty Name
+            throw "zlib/zstd libraries not found in $vcpkgLib"
+          }
           $env:LIB = "$libDir;$vcpkgLib;$env:LIB"
 
           # The compiler calls `g++` to link; translate that call to cl.exe.
           $shim = Join-Path $env:RUNNER_TEMP "llvm_shim.obj"
-          & cl.exe /nologo /c /O2 /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
+          & cl.exe /nologo /c /O2 /MD /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
           if ($LASTEXITCODE -ne 0) { throw "failed to compile llvm_shim.cpp" }
           $linkArgs = (@($shim) + $libNames + $systemLibs + @($zlib, $zstd)) -join " "
 
