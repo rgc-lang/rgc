@@ -231,11 +231,12 @@ jobs:
           ( cd src && bash tools/llvm-shim.sh )
           link_args="$(cat src/target/build/link-args)"
           if [ "$RUNNER_OS" = "macOS" ]; then
-            link_args="$link_args -lc++"
+            link_args="$link_args -stdlib=libc++ -lc++ -lc++abi"
           fi
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
-            link_args="$link_args -fuse-ld=lld"
+            link_args="$link_args -fuse-ld=lld -v"
           fi
+          echo "link_args: $link_args"
           # Build the previous release's self-hosted compiler from its source.
           ( cd bootstrap-src/src && "$seed" src/main.rg --link-args "$link_args" -o "$PWD/../../rgc-bootstrap" )
           # Build this release's source twice with the self-hosted compiler.
@@ -286,7 +287,9 @@ jobs:
               if ($raw -like "-L*") { continue }
               $name = $raw
               if ($name -like "-l*") { $name = $name.Substring(2) }
+              if ($name -match '[\\/]') { $name = [IO.Path]::GetFileName($name) }
               if ($name -notlike "*.lib") { $name += ".lib" }
+              if ($name -match '^(zstd|libzstd|zlib|zs)') { continue }
               $out += $name
             }
             return $out
@@ -303,13 +306,21 @@ jobs:
             Get-ChildItem $vcpkgLib | Select-Object -ExpandProperty Name
             throw "zlib/zstd libraries not found in $vcpkgLib"
           }
-          $env:LIB = "$libDir;$vcpkgLib;$env:LIB"
+          # LLVM's llvm-config emits build-machine paths for zlib/zstd (e.g.
+          # S:\llvm\...\zstd_static.lib). Drop those entries and provide the
+          # LLVM-expected names from the vcpkg static libraries instead.
+          $toolLib = Join-Path $env:RUNNER_TEMP "rgc-tool-libs"
+          New-Item -ItemType Directory -Force -Path $toolLib | Out-Null
+          Copy-Item (Join-Path $vcpkgLib $zstd) (Join-Path $toolLib "zstd_static.lib")
+          Copy-Item (Join-Path $vcpkgLib $zlib) (Join-Path $toolLib "zlib.lib")
+          Copy-Item (Join-Path $vcpkgLib $zlib) (Join-Path $toolLib "zs.lib")
+          $env:LIB = "$toolLib;$libDir;$vcpkgLib;$env:LIB"
 
           # The compiler calls `g++` to link; translate that call to cl.exe.
           $shim = Join-Path $env:RUNNER_TEMP "llvm_shim.obj"
           & cl.exe /nologo /c /O2 /MD /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
           if ($LASTEXITCODE -ne 0) { throw "failed to compile llvm_shim.cpp" }
-          $linkArgs = (@($shim) + $libNames + $systemLibs + @($zlib, $zstd)) -join " "
+          $linkArgs = (@($shim) + $libNames + $systemLibs + @("zstd_static.lib", "zlib.lib")) -join " "
 
           $wrapDir = Join-Path $env:RUNNER_TEMP "rgc-link"
           New-Item -ItemType Directory -Force -Path $wrapDir | Out-Null
