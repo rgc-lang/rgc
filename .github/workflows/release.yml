@@ -231,10 +231,10 @@ jobs:
           ( cd src && bash tools/llvm-shim.sh )
           link_args="$(cat src/target/build/link-args)"
           if [ "$RUNNER_OS" = "macOS" ]; then
-            link_args="$link_args -stdlib=libc++ -lc++ -lc++abi"
+            link_args="$link_args -stdlib=libc++ -lc++ -lc++abi -Wl,-rpath,/usr/lib"
           fi
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
-            link_args="$link_args -fuse-ld=lld -v"
+            link_args="$link_args -fuse-ld=lld"
           fi
           echo "link_args: $link_args"
           # Build the previous release's self-hosted compiler from its source.
