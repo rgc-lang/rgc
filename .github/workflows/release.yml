@@ -221,6 +221,9 @@ jobs:
           seed="$PWD/toolchain/rgc"
           ( cd src && bash tools/llvm-shim.sh )
           link_args="$(cat src/target/build/link-args)"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            link_args="$link_args -lc++"
+          fi
           if [ "${{ matrix.platform }}" = "macos-arm64" ]; then
             link_args="$link_args -fuse-ld=lld"
           fi
