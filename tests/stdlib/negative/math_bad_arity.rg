@@ -1,0 +1,3 @@
+def main() {
+    print(sqrt(1, 2))
+}

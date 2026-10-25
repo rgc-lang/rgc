@@ -1,0 +1,25 @@
+bind1 True
+bind2 True
+ports True True True
+send True 4
+recv True ping 127.0.0.1 True
+dgram one two
+empty True 0
+trunc True abc
+hostname True hostname
+ipv6_bind True
+ipv6 True v6 ::1 True
+binary True 3 0 255
+try_empty True True
+try_send True False 2
+try_recv nb
+timeout False timeout
+badaddr False address must be host:port
+badport False port out of range
+emptyhost False host is empty
+rangeport False port out of range
+zeromax False max must be positive
+resolve False True
+closed_send False socket is closed
+closed_recv False socket is closed
+closed_port -1

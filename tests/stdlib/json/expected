@@ -1,0 +1,58 @@
+round {"name":"rgc","n":3,"pi":3.5,"ok":true,"none":null,"xs":[1,2,"three"],"nested":{"k":false}}
+len 7
+name rgc
+n 3
+pi 3.500000
+ok True
+none True
+has True False
+key0 name
+val0 rgc
+xslen 3
+x0 1
+x2 three
+nested {"k":false}
+built {"id":7,"tags":["a","b"],"pi":1.5,"flag":true,"none":null}
+esc_ok True
+esc {"s":"a\nb\t\"c\\d/e"}
+esc_len 10
+empty True 0 0
+mixed -50.000000 17
+err [[1,]] -> unexpected character
+err [1 2] -> trailing characters
+err ["unterminated] -> unterminated string
+err [{"a":1] -> unterminated object
+err [tru] -> unexpected end of input
+err [-] -> invalid number
+err [1.] -> invalid number
+err [1e] -> invalid number
+err [01] -> invalid number
+uni True Aé你😀 10
+uni_out "Aé你😀"
+bf True 5 "a\bb\fc"
+ctrl "\u0001"
+err ["\uD800"] -> invalid unicode escape
+err ["\uDC00"] -> invalid unicode escape
+err ["\uD83D\u0041"] -> invalid unicode escape
+err ["\u12x4"] -> invalid unicode escape
+err ["\u12"] -> invalid unicode escape
+err ["\u0000"] -> NUL character not supported
+err ["\q"] -> unsupported escape
+raw_nl False unescaped control character
+raw_tab False unescaped control character
+imax True 9223372036854775807
+imin True -9223372036854775808
+err [9223372036854775808] -> integer out of range
+err [-9223372036854775809] -> integer out of range
+err [12345678901234567890] -> integer out of range
+depth256 True
+depth257 False nesting too deep
+set_at [1,20,3]
+remove_at True [20,3]
+remove_at_bad False [20,3]
+remove_key True {"b":2}
+remove_missing False {"b":2}
+inf null
+ninf null
+nan null
+ovf True 1e999

@@ -1,0 +1,56 @@
+ok True
+lit True
+search True
+miss False
+find 2
+find_no -1
+repl c-d
+alt True False
+grp True False
+dot True False
+cls True False
+neg True False
+esc True False
+anch True False
+opt True True False
+star True True
+rep True True False False
+rep2 True False
+rep3 False True True
+rep4 True True False
+bound True False
+nonbound True False
+empty True 0 -a-b-
+bad False missing `)`
+bad2 False invalid character class range
+bad3 False invalid repetition range
+bad4 False invalid repetition
+badref False invalid backreference
+badgrp False unsupported group syntax
+cap True 2 7 12-34 12 34
+nomiss False -1 0
+cap2 True a a []
+cap2b ab b
+nest 3 ab a b
+repc ab b
+nc 1 ababc c
+back True False
+backm True 2 9 cat
+back2 2 False
+back3 True aa
+back4 True aa 4
+back5 False False
+lazy1 a ---
+lazy2 a
+greedy2 aaa
+lazy3 <a> a
+greedy3 <a><b> a><b
+lazyq a
+lazystar aaab
+many True 10 True
+emptym True [] []
+altcap a a -b
+sub host:user
+sub2 b-a-a@b d-c-c@d
+sub3 $1
+sub4 []

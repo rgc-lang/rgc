@@ -1,0 +1,24 @@
+h2_connect True
+h2_alpn h2
+h2_get True 200 6 hello
+h2_trailers 1 x-trl: yes
+h2_big True 200 200000
+h2_post True 200 5000
+h2_many True 4
+h2_many_0 True 200 6 hello
+h2_many_1 True 200 8 subfile
+h2_many_2 True 200 200000
+h2_many_3 True 404
+h2_many_trailer 1 x-trl: yes
+h2_many_empty True 0
+h2_many_limit True False response body too large True 200 6
+h2_after_many True 200 6
+cli_get True 200 HTTP/2 hello
+cli_trailer yes
+cli_server True
+cli_big True 200000
+cli_post True 200 hello-h2
+cli_redirect True 200 subfile
+cli_404 True 404
+cli_verify True HTTP/2
+cli_limit False response body too large

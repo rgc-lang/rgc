@@ -1,0 +1,26 @@
+/archive/
+
+# Build artifacts
+build/
+target/
+*.o
+*.out
+*.ll
+
+# IDE
+.idea/
+.vscode/
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# Python packaging
+__pycache__/
+*.egg-info/
+*.so
+
+# Test caches
+.pytest_cache/
+
+docs/compiler/ROADMAP.md

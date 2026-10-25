@@ -1,0 +1,29 @@
+listen True
+port_positive True
+connect True
+accept True
+client_send 5
+server_recv True hello
+server_send 5
+client_recv True world
+recv_zero True []
+eof True 0
+hostname_connect True
+second_accept True
+bad_addr False address must be host:port
+bad_port False port out of range
+empty_host False host is empty
+refused False True
+try_accept_again True
+connect_start True
+connect_poll True
+connect_finish True
+client_again True
+try_accept True False
+try_send True False 3
+read_ready True
+try_recv abc
+try_send2 True False 3
+read_ready2 True
+try_recv2 xyz
+server_eof True True

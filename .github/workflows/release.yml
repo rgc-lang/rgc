@@ -1,0 +1,145 @@
+# Build the rgc compiler for every supported platform, package the release
+# archives (rgc-<os>-<arch>.tar.gz/.zip, including lib/), and publish them to
+# the rgc-lang/releases GitHub Release.
+#
+# Modeled on rust-analyzer's release workflow: a per-platform build matrix
+# uploads artifacts, then a publish job aggregates them and creates the
+# GitHub Release. The release is created in the separate rgc-lang/releases
+# repository, which the `rgc-releases` GitHub App writes to with an
+# installation token: the App installation selects only the `releases`
+# repository, so the workflow never holds a personal credential.
+# Requires RGC_RELEASES_APP_ID (organization variable) and
+# RGC_RELEASES_APP_PRIVATE_KEY (secret, PEM).
+#
+# Tags: v0.1.0, v0.2.0, ...  (same tag must be pushed to rgc-lang/rack so the
+# rack package manager archives land in the same Release).
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    name: dist (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: linux
+            arch: x64
+            runner: ubuntu-latest
+          - platform: linux-arm64
+            os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos-x64
+            os: macos
+            arch: x64
+            runner: macos-15-intel
+          - platform: macos-arm64
+            os: macos
+            arch: arm64
+            runner: macos-14
+          - platform: windows-x64
+            os: windows
+            arch: x64
+            runner: windows-latest
+          - platform: windows-arm64
+            os: windows
+            arch: arm64
+            runner: windows-11-arm
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up LLVM toolchain
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -ExecutionPolicy Bypass -File scripts/setup-llvm.ps1
+          else
+            eval "$(bash scripts/setup-llvm.sh)"
+            echo "LLVM_BIN=$LLVM_BIN" >> "$GITHUB_ENV"
+            echo "LLVM_DIR=$LLVM_DIR" >> "$GITHUB_ENV"
+          fi
+        shell: bash
+
+      - name: Verify native ARM64 toolchain
+        if: matrix.platform == 'windows-arm64'
+        shell: bash
+        run: g++ -dumpmachine | grep -q aarch64
+
+      - name: Build compiler
+        run: |
+          cd src
+          ./build.sh
+        shell: bash
+
+      - name: Package release archives
+        run: |
+          python3 scripts/package-release.py \
+            --component rgc \
+            --os ${{ matrix.os }} \
+            --arch ${{ matrix.arch }} \
+            --bin build/rgc \
+            --lib-dir lib \
+            --out dist
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: dist
+
+    steps:
+      - name: Mint GitHub App token for rgc-lang/releases
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.RGC_RELEASES_APP_ID }}
+          private-key: ${{ secrets.RGC_RELEASES_APP_PRIVATE_KEY }}
+          owner: rgc-lang
+          repositories: releases
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Create GitHub Release in rgc-lang/releases
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          gh release create "$tag" dist/* \
+            --repo rgc-lang/releases \
+            --title "$tag" \
+            --generate-notes \
+            --latest \
+            || gh release create "$tag" dist/* \
+              --repo rgc-lang/releases \
+              --title "$tag" \
+              --notes "RGC $tag" \
+              --latest

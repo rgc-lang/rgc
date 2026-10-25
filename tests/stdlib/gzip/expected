@@ -1,0 +1,24 @@
+is_gzip True False False
+is_zlib True False False
+gzip True 18 compressed payload
+zlib True compressed payload
+raw True compressed payload
+mem True compressed payload
+empty False empty compressed data
+bad False True
+limit False output limit exceeded
+under_limit True 10000
+raw_big True 10000
+limit_raw False output limit exceeded
+members 1 1
+multi True 36 2
+compress True 1 True
+roundtrip True hello hello hello 1
+compress_empty True True 0
+trailing True compressed payload
+crc False incorrect data check
+truncated False truncated compressed data
+level0 True True hello hello hello
+level9 True True hello hello hello 1
+limit_zero True 18
+zlib_limit False output limit exceeded

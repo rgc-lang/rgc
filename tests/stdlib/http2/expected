@@ -1,0 +1,15 @@
+rfc True 4 :method=GET :authority=www.example.com
+req True 6
+h :method=POST
+h :scheme=https
+h :authority=example.com:8443
+h :path=/a?b=1
+h user-agent=rgc-test
+h x-token=abc
+static True :method=GET
+dyn True 1 True custom-key=custom-value
+resp True 2 :status=200 content-type=text/plain
+trl True 1 x-trl=yes
+frame 12 0 0 3 0 1 1
+bad False truncated string
+limit False response header too large

@@ -1,0 +1,16 @@
+# RGC compiler (stage1) — managed by rack
+#
+# rack build stages src/*.rg into target/build/, invokes <RGC or rgc> to compile,
+# producing target/bin/rgc; prebuild compiles the embedded-LLVM backend shim.
+
+[package]
+name = "rgc"
+version = "0.1.0"
+entry = "src/main.rg"
+license = "Apache-2.0"
+repository = "https://github.com/lexing-2026"
+description = "RGC compiler (stage1, embedded LLVM)"
+
+[build]
+prebuild = "bash tools/llvm-shim.sh"
+link-args-file = "target/build/link-args"

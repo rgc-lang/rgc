@@ -1,0 +1,6 @@
+listen True
+tcp_results server:ping:9 client:pong:ping:4
+timeout_result timeout
+cancel_result 7
+udp_result udp:ping:True
+refused False True

@@ -1,0 +1,15 @@
+write True 6
+read True 6 6
+bytes 0 1 0 255 10 65
+write_empty True 0
+read_empty True 0 0
+overwrite True True 2
+missing False cannot open file
+write_missing False cannot open file
+gz_compress True True
+gz_read True 35 1 file gzip payload file gzip payload
+gz_limit False output limit exceeded
+gz_limit_zero True 35
+gz_missing False cannot open file
+gz_write_missing False cannot open file
+gz_binary True True 4 255

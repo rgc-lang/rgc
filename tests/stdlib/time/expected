@@ -1,0 +1,3 @@
+monotonic True
+elapsed_reasonable True
+now_positive True

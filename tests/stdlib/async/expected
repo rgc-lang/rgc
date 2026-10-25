@@ -1,0 +1,50 @@
+int 42
+str hi rgc
+float 2.500000
+bool False
+custom 3 4
+ok 42
+err negative
+nested 30
+annotated 15
+run 42
+parallel True
+slow 3
+list 6
+done-before False
+done-after True
+done-value 1
+wait-timeout False
+wait-zero False
+wait-done True
+wait-value 1
+cancel-before False
+cancel-first True
+cancel-second False
+cancel-after True
+cancel-wait True
+cancel-value -1
+cancel-done-first True
+cancel-done-request False
+cancel-done-flag False
+cancel-done-value 2
+cancel-ignore True
+cancel-ignore-short False
+cancel-ignore-flag True
+cancel-ignore-value 1
+gather-done-before False
+gather-parallel True
+gather-len 2
+gather-sum 3
+gather-custom 5 8
+gather-empty 0
+gather-str 2 hi x hi y
+gather-run 2 3 7
+wait-any-idx 1
+wait-any-value 42
+wait-any-cancel True
+wait-any-slow 1
+wait-any-empty -1
+cancel-outside False
+wait-any-main 0
+wait-any-main-value 3

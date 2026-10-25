@@ -1,0 +1,5 @@
+range True True
+repeatable True
+single_value True
+float_range True
+float_repeatable True

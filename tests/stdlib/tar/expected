@@ -1,0 +1,21 @@
+create True True True
+list True 5
+file dir/hello.txt 10 0 420
+empty_entry dir/empty 0 0
+dir dir/logs/ 5 493
+mode dir/run.sh 493 12345
+long True 10 0
+extract True 10 10 104
+extract_empty True 0 0
+extract_dir False not a regular file
+extract_missing False entry not found
+empty_archive True 0
+bad_sum False invalid tar checksum
+trunc_header False truncated tar header
+trunc_data False truncated tar data
+direct True True
+direct_list True 1
+direct_entry one.txt 1 420
+bad_name False empty entry name
+bad_kind False unsupported entry kind
+create_from True True

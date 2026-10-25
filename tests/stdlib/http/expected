@@ -1,0 +1,34 @@
+server_start True
+get True 200 hello, world
+get_header text/plain one
+custom_header True custom
+post True 201 echo:ping
+request_gzip True 200 echo:compressed request body
+request_gzip_header yes
+chunked True 200 chunk1!
+trailer yes 1
+keepalive True
+redirect True 200 hello, world True
+redirect_abs True 200 hello, world
+cookie True True sid=abc123
+gzip True compressed payload
+deflate True compressed payload
+max_body False response body too large
+gzip_bomb False response body too large
+max_header False response header too large
+timeout False timeout
+early True 200 after 100
+head True 200 0
+no_content True 204 0
+binary 256 0 255
+query True /query?x=1&y=2
+query_encode q=a%20b&x=1
+query_decode q=hello world x=你
+proxy True 200 proxied http://example.invalid/hello
+bad_scheme False unsupported URL scheme
+no_host False URL has no host
+bad_port False port out of range
+refused False True
+async_get True 200
+async_gather 2 True True
+quit True 200

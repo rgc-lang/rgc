@@ -1,0 +1,16 @@
+trim=[Hello RGC]
+find = 8
+replace = a+b+c
+upper = ABC
+lower = abc
+pad = 007
+sum = 6
+min/max = 1 3
+sorted = 1,2,3
+rev = 3,2,1
+names = alice,bob,carol
+path = a/b
+base = y.txt
+dir = /x
+ext = txt
+stem = /x/y
