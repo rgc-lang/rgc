@@ -191,7 +191,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-zlib-zstd-${{ matrix.platform }}-llvm-${{ env.LLVM_VERSION }}
+          key: vcpkg-zlib-zstd-${{ matrix.platform }}-static-llvm-${{ env.LLVM_VERSION }}
 
       - name: Install zlib/zstd (Windows)
         if: runner.os == 'Windows'
@@ -199,16 +199,8 @@ jobs:
         run: |
           $vcpkg = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
           $arch = if ("${{ matrix.platform }}" -eq "windows-arm64") { "arm64" } else { "x64" }
-          $triplet = "$arch-windows-static-md"
-          $overlay = Join-Path $env:RUNNER_TEMP "vcpkg-triplets"
-          New-Item -ItemType Directory -Force -Path $overlay | Out-Null
-          @"
-          set(VCPKG_TARGET_ARCHITECTURE $arch)
-          set(VCPKG_CRT_LINKAGE dynamic)
-          set(VCPKG_LIBRARY_LINKAGE static)
-          "@ | Set-Content -Path (Join-Path $overlay "$triplet.cmake") -Encoding ascii
-          Copy-Item -Path (Join-Path $overlay "$triplet.cmake") -Destination (Join-Path $vcpkg "triplets\$triplet.cmake") -Force
-          & "$vcpkg\vcpkg.exe" install "zlib:$triplet" "zstd:$triplet" --overlay-triplets="$overlay" --clean-after-build
+          $triplet = "$arch-windows-static"
+          & "$vcpkg\vcpkg.exe" install "zlib:$triplet" "zstd:$triplet" --clean-after-build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "CMAKE_PREFIX_PATH=$vcpkg\installed\$triplet" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -220,7 +212,7 @@ jobs:
         continue-on-error: true
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-zlib-zstd-${{ matrix.platform }}-llvm-${{ env.LLVM_VERSION }}
+          key: vcpkg-zlib-zstd-${{ matrix.platform }}-static-llvm-${{ env.LLVM_VERSION }}
 
       - name: Build self-hosted compiler (Unix)
         if: runner.os != 'Windows'
@@ -320,7 +312,7 @@ jobs:
 
           # The compiler calls `g++` to link; translate that call to cl.exe.
           $shim = Join-Path $env:RUNNER_TEMP "llvm_shim.obj"
-          & cl.exe /nologo /c /O2 /MD /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
+          & cl.exe /nologo /c /O2 /MT /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS /I "$llvmRoot\include" src\llvm_shim.cpp /Fo"$shim"
           if ($LASTEXITCODE -ne 0) { throw "failed to compile llvm_shim.cpp" }
           $linkArgs = (@($shim) + $libNames + $systemLibs + @("zstd_static.lib", "zlib.lib")) -join " "
 
@@ -335,7 +327,7 @@ jobs:
             if ($null -eq $obj -and -not $a.StartsWith("-")) { $obj = $a; continue }
             $libs += $a
           }
-          & cl.exe /nologo /MD $obj /link ("/OUT:" + $out) @libs
+          & cl.exe /nologo /MT $obj /link ("/OUT:" + $out) @libs
           exit $LASTEXITCODE
           '@ | Set-Content -Path (Join-Path $wrapDir "link.ps1") -Encoding ascii
           "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0link.ps1`" %*`r`n" |
