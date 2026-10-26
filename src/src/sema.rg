@@ -340,6 +340,8 @@ public class Sema {
     fn_param_customs: Map[str, str]    # function name -> "Point,List$int" (empty at scalar positions)
     fn_is_extern: Map[str, int]        # function name -> 1 = extern def (C ABI; type conversions at call sites)
     async_fns: Map[str, int]           # function name -> 1 = async def (calls return Task[T])
+    fn_def_line: Map[str, int]         # function name -> source line of its `def` (for "function defined here")
+    fn_def_col: Map[str, int]          # function name -> source col of its `def`
 
     # generic templates and instantiations
     generic_fns: Map[str, Stmt]
@@ -446,6 +448,8 @@ public def make_sema() -> Sema {
     s.fn_param_customs = Map[str, str]()
     s.fn_is_extern = Map[str, int]()
     s.async_fns = Map[str, int]()
+    s.fn_def_line = Map[str, int]()
+    s.fn_def_col = Map[str, int]()
     s.generic_fns = Map[str, Stmt]()
     s.generic_fn_names = List[str]()
     s.generic_classes = Map[str, Stmt]()
@@ -1993,7 +1997,7 @@ public def sema_generic_fn_call(s: @var Sema, e: @Expr, gen_key: str) -> str {
     s.last_generic_custom = s.fn_ret_customs.get(inst_name)
     # Record call site -> instance physical name; the IR side uses it directly (no re-deriving instance names from bare names).
     s.call_syms.put(sema_call_key(s, @e), inst_name)
-    sema_check_call_args(s, e, "function", e.name,
+    sema_check_call_args(s, e, "function", e.name, inst_name,
                          s.fn_param_kinds.get(inst_name),
                          s.fn_param_customs.get(inst_name), 0)
     if s.async_fns.contains(inst_name) {
@@ -2073,6 +2077,8 @@ public def sema_register_class(s: @var Sema, c: Stmt) {
 # Register function signatures.
 public def sema_register_fn(s: @var Sema, fn_name: str, f: Stmt, class_name: str) {
     s.fn_order.push(fn_name)
+    s.fn_def_line.put(fn_name, f.line)
+    s.fn_def_col.put(fn_name, f.col)
     renc = sema_encode_type(s, f.ret_type)
     ret_kind = sema_env_kind(renc)
     ret_custom = sema_env_custom(renc)
@@ -3048,9 +3054,34 @@ public def sema_check_try(s: @var Sema, e: @Expr) -> str {
     return ok_kind
 }
 
+# Build the "function defined here" secondary span for a registered function.
+# Returns a sentinel span (line < 1, skipped by the renderer) for builtins that
+# have no source definition. The real span covers the function name as written:
+# for class methods the mangled name is Class$method, so the source name is the
+# part after '$' and the `def` keyword starts 4 columns before it ("def ").
+def sema_fn_def_span(s: @var Sema, fname: str) -> DiagSpan {
+    sp = make_diag_span(0, 0, 1, "function defined here")
+    if not s.fn_def_line.contains(fname) {
+        return sp
+    }
+    line = s.fn_def_line.get(fname)
+    col = s.fn_def_col.get(fname) + 4          # after "def "
+    sname = fname
+    dollar = str_find(fname, "$")
+    if dollar >= 0 {
+        parts = fname.split("$")
+        sname = parts.get(parts.len() - 1)
+    }
+    return make_diag_span(line, col, sname.len(), "function defined here")
+}
+
 # Check argument counts/types; skip_self=1 skips the method self.
+# `fname` is the display name used in messages; `def_name` is the registry
+# name (mangled Class$method, module alias, generic instance, ...) used to
+# look up the definition location for the "function defined here" span.
 public def sema_check_call_args(s: @var Sema, e: @Expr, label: str, fname: str,
-                         pkinds: str, pcustoms: str, skip_self: int) -> bool {
+                         def_name: str, pkinds: str, pcustoms: str,
+                         skip_self: int) -> bool {
     klist = List[str]()
     clist = List[str]()
     if pkinds.len() > 0 {
@@ -3064,8 +3095,15 @@ public def sema_check_call_args(s: @var Sema, e: @Expr, label: str, fname: str,
         expected = 0
     }
     if e.args.len() != expected {
-        sema_error(s, e.line, e.col, label + " `" + fname + "` expects " +
-                   to_string(expected) + " arguments, got " + to_string(e.args.len()))
+        msg = label + " `" + fname + "` expects " +
+              to_string(expected) + " arguments, got " + to_string(e.args.len())
+        if s.fn_def_line.contains(def_name) {
+            subs = List[DiagSpan]()
+            subs.push(sema_fn_def_span(s, def_name))
+            sema_error_subs(s, e.line, e.col, msg, subs)
+        } else {
+            sema_error(s, e.line, e.col, msg)
+        }
         return False
     }
     j = 0
@@ -3095,9 +3133,16 @@ public def sema_check_call_args(s: @var Sema, e: @Expr, label: str, fname: str,
             ac = sema_expr_custom(s, e.args.get(j))
         }
         if not sema_can_assign(ak, ac, pk, pc) {
-            sema_error(s, arg.line, arg.col, "argument " + to_string(j + 1) + " to `" +
-                       fname + "` has type `" + sema_type_name(ak, ac) + "`, expected `" +
-                       sema_type_name(pk, pc) + "`")
+            msg = "argument " + to_string(j + 1) + " to `" +
+                  fname + "` has type `" + sema_type_name(ak, ac) + "`, expected `" +
+                  sema_type_name(pk, pc) + "`"
+            if s.fn_def_line.contains(def_name) {
+                subs = List[DiagSpan]()
+                subs.push(sema_fn_def_span(s, def_name))
+                sema_error_subs(s, arg.line, arg.col, msg, subs)
+            } else {
+                sema_error(s, arg.line, arg.col, msg)
+            }
         }
         if not is_borrow_param and str_eq(pk, "custom") and
            arg.kind == ExprVar() {
@@ -3477,7 +3522,7 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                     if alias.startswith("math.") {
                         return sema_check_math_call(s, @e, alias.slice(5, alias.len()))
                     }
-                    sema_check_call_args(s, @e, "function", exp_key,
+                    sema_check_call_args(s, @e, "function", exp_key, alias,
                                          s.fn_param_kinds.get(alias),
                                          s.fn_param_customs.get(alias), 0)
                     if s.async_fns.contains(alias) {
@@ -3499,7 +3544,7 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
             obj_custom = sema_expr_custom(s, e.object.get(0))
             mname = obj_custom + "$" + e.name
             if s.fn_ret_kinds.contains(mname) {
-                sema_check_call_args(s, @e, "method", e.name,
+                sema_check_call_args(s, @e, "method", e.name, mname,
                                      s.fn_param_kinds.get(mname),
                                      s.fn_param_customs.get(mname), 1)
                 return s.fn_ret_kinds.get(mname)
@@ -3635,7 +3680,7 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
             }
             # Record the resolution result: the IR side emits calls by physical symbol name.
             s.call_syms.put(sema_call_key(s, @e), fn_key)
-            sema_check_call_args(s, @e, "function", e.name,
+            sema_check_call_args(s, @e, "function", e.name, fn_key,
                                  s.fn_param_kinds.get(fn_key),
                                  s.fn_param_customs.get(fn_key), 0)
             if s.async_fns.contains(fn_key) {
