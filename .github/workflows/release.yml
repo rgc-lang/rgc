@@ -325,7 +325,7 @@ jobs:
           $wrapDir = Join-Path $env:RUNNER_TEMP "rgc-link"
           New-Item -ItemType Directory -Force -Path $wrapDir | Out-Null
           @'
-          $obj = $null; $out = $null; $libs = @(); $linkFlags = @()
+          $obj = $null; $out = $null; $libs = @(); $linkFlags = @("/STACK:16777216")
           for ($i = 0; $i -lt $args.Count; $i++) {
             $a = $args[$i]
             if ($a -eq "-g" -or $a -eq "-lm" -or $a -eq "-lpthread" -or $a -eq "-fPIC") { continue }
@@ -357,15 +357,32 @@ jobs:
             Set-Content -Path (Join-Path $wrapDir "g++.cmd") -Encoding ascii
           $env:PATH = "$wrapDir;$env:PATH"
 
+          # Capture crash dumps so a silent native failure leaves evidence.
+          $dumpDir = Join-Path $env:RUNNER_TEMP "dumps"
+          New-Item -ItemType Directory -Force -Path $dumpDir | Out-Null
+          $wer = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"
+          New-Item -Path $wer -Force | Out-Null
+          Set-ItemProperty -Path $wer -Name DumpFolder -Value $dumpDir
+          Set-ItemProperty -Path $wer -Name DumpType -Value 1
+
+          function Invoke-Stage {
+            param([string]$Label, [string]$Exe, [string[]]$StageArgs)
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              & $Exe @StageArgs
+              $rc = $LASTEXITCODE
+              Write-Host ("{0}: exit={1} (attempt {2}/3)" -f $Label, $rc, $attempt)
+              if ($rc -eq 0) { return }
+            }
+            throw "$Label failed after 3 attempts (last exit=$rc)"
+          }
+
           $seed = Join-Path $root "toolchain\rgc.exe"
           Push-Location (Join-Path $root "bootstrap-src\src")
-          & $seed src/main.rg --link-args $linkArgs -o "$root\rgc-bootstrap.exe"
-          if ($LASTEXITCODE -ne 0) { throw "bootstrap compiler build failed" }
+          Invoke-Stage "bootstrap" $seed @("src/main.rg", "--link-args", $linkArgs, "-o", "$root\rgc-bootstrap.exe")
           Pop-Location
-          & "$root\rgc-bootstrap.exe" src/src/main.rg --link-args $linkArgs -o "$root\rgc1.exe"
-          if ($LASTEXITCODE -ne 0) { throw "rgc1 build failed" }
-          & "$root\rgc1.exe" src/src/main.rg --link-args $linkArgs -o "$root\rgc2.exe"
-          if ($LASTEXITCODE -ne 0) { throw "rgc2 build failed" }
+          Invoke-Stage "rgc1" "$root\rgc-bootstrap.exe" @("src/src/main.rg", "--link-args", $linkArgs, "-o", "$root\rgc1.exe")
+          Invoke-Stage "rgc2" "$root\rgc1.exe" @("src/src/main.rg", "--link-args", $linkArgs, "-o", "$root\rgc2.exe")
+          Invoke-Stage "rgc3" "$root\rgc2.exe" @("src/src/main.rg", "--link-args", $linkArgs, "-o", "$root\rgc3.exe")
 
           & "$root\rgc1.exe" examples\hello.rg --emit-llvm -o "$root\hello.ll"
           $rc = $LASTEXITCODE
@@ -373,7 +390,7 @@ jobs:
           Write-Host "hello IR: exit=$rc bytes=$size"
           if ($rc -ne 0 -or $size -le 0) { throw "hello IR generation failed (exit=$rc)" }
 
-          foreach ($gen in @("rgc1", "rgc2")) {
+          foreach ($gen in @("rgc1", "rgc2", "rgc3")) {
             $exe = "$root\$gen.exe"
             $ll = "$root\$gen.ll"
             $irLog = "$root\$gen-ir.log"
@@ -386,8 +403,11 @@ jobs:
               throw "$gen IR generation failed (exit=$rc)"
             }
           }
-          if ((Get-FileHash "$root\rgc1.ll").Hash -ne (Get-FileHash "$root\rgc2.ll").Hash) {
-            throw "rgc1/rgc2 IR mismatch"
+          $h1 = (Get-FileHash "$root\rgc1.ll").Hash
+          $h2 = (Get-FileHash "$root\rgc2.ll").Hash
+          $h3 = (Get-FileHash "$root\rgc3.ll").Hash
+          if ($h1 -ne $h2 -or $h2 -ne $h3) {
+            throw "rgc1/rgc2/rgc3 IR mismatch"
           }
 
           & "$root\rgc2.exe" examples\hello.rg -o "$root\hello.exe"
@@ -397,6 +417,14 @@ jobs:
           & "$root\rgc2.exe" examples\hello.rg --emit-exports "$root\exports.json"
           if ($LASTEXITCODE -ne 0) { throw "emit-exports failed" }
           if (-not (Test-Path "$root\exports.json")) { throw "exports.json not written" }
+
+      - name: Upload crash dumps (Windows)
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-dumps-${{ matrix.platform }}
+          path: ${{ runner.temp }}/dumps
+          if-no-files-found: ignore
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
