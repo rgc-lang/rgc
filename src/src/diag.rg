@@ -292,6 +292,35 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
     return out + "\n"
 }
 
+# rustc-style trailing hint: for each unique error code, suggest `rgc explain`.
+# Returns "" when no diagnostic carries a code (legacy path).
+def diag_explain_hint(items: @List[DiagItem]) -> str {
+    seen = List[str]()
+    out = ""
+    i = 0
+    while i < items.len() {
+        it = items.get(i)
+        code = it.code
+        if code.len() > 0 {
+            j = 0
+            found = False
+            while j < seen.len() {
+                if str_eq(seen.get(j), code) {
+                    found = True
+                }
+                j = j + 1
+            }
+            if not found {
+                seen.push(code)
+                out = out + "For more information about this error, try `rgc explain " +
+                      code + "`.\n"
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
 # Line-number column width for a diagnostic list (for alignment).
 public def diag_width(items: @List[DiagItem]) -> int {
     max_line = 0
@@ -321,7 +350,7 @@ public def diag_render(source_name: str, source: str,
         out = out + diag_render_one(source_name, source, @cur, width)
         i = i + 1
     }
-    return out
+    return out + diag_explain_hint(items)
 }
 
 # Multi-file diagnostic rendering: when file is empty or equals the entry name, render with the entry source;
@@ -408,5 +437,5 @@ public def diag_render_multi(entry_name: str, entry_src: str,
         out = out + diag_render_one(name, src, @it, width)
         i = i + 1
     }
-    return out
+    return out + diag_explain_hint(items)
 }

@@ -25,6 +25,7 @@ import diag
 import modules
 import fmt
 import exports
+import explain
 
 # Read file content; on failure continue with an empty source.
 public def read_source(path: str) -> str {
@@ -215,6 +216,67 @@ public def check_program(src_path: str) -> int {
     return 0
 }
 
+# `rgc explain E0XXX`: print the error-code documentation (rustc --explain style).
+def explain_is_code(s: str) -> bool {
+    if s.len() != 5 {
+        return False
+    }
+    if s.char_at(0) != "E".char_at(0) {
+        return False
+    }
+    i = 1
+    while i < 5 {
+        ch = s.char_at(i)
+        if ch < "0".char_at(0) or ch > "9".char_at(0) {
+            return False
+        }
+        i = i + 1
+    }
+    return True
+}
+
+public def explain_command(argv: @List[str]) -> int {
+    if argv.len() < 3 {
+        print("usage: rgc explain E0XXX")
+        print("")
+        print("Error-code families (full table: devdoc/RGC-0.0.5-ERRORCODES.md):")
+        print("  E00xx  CLI / driver / file I/O")
+        print("  E01xx  lexical errors")
+        print("  E02xx  syntax errors")
+        print("  E03xx  module / name resolution / visibility")
+        print("  E04xx  type checking")
+        print("  E05xx  expression name resolution")
+        print("  E06xx  ownership / move")
+        print("  E07xx  borrow checking")
+        print("  E08xx  generics / interfaces")
+        print("  E09xx  function / call / arguments")
+        print("  E10xx  enum / match / patterns")
+        print("  E11xx  control flow")
+        print("  E12xx  async / Task")
+        print("  E13xx  format strings")
+        print("  E14xx  FFI / extern")
+        print("  E15xx  builtins / standard library methods")
+        print("  E16xx  `?` operator / Result")
+        return 1
+    }
+    code = argv.get(2)
+    if not explain_is_code(code) {
+        write_stderr("error: invalid error code: " + code + "\n")
+        write_stderr("help: error codes have the form E0XXX, for example E0401\n")
+        return 1
+    }
+    text = explain_for_code(code)
+    if text.len() == 0 {
+        write_stderr("error: no explanation found for " + code + "\n")
+        write_stderr("help: see devdoc/RGC-0.0.5-ERRORCODES.md for the error-code table\n")
+        return 1
+    }
+    print(code)
+    print("")
+    print(text)
+    return 0
+}
+
 public def main() -> int {
     argv = args()
     if argv.len() < 2 {
@@ -228,9 +290,14 @@ public def main() -> int {
         print("  rgc check <file.rg>             # type/borrow check only, no codegen")
         print("  rgc fmt <file.rg> [...] [--check]  # format in place; --check reports only")
         print("  rgc ast-dump <file.rg>              # parse only")
+        print("  rgc explain E0XXX                   # show error-code documentation")
         return 1
     }
     first = argv.get(1)
+
+    if str_eq(first, "explain") {
+        return explain_command(@argv)
+    }
 
     if str_eq(first, "fmt") {
         files = List[str]()
