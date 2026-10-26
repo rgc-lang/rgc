@@ -115,22 +115,15 @@ jobs:
       - name: Download compiler from ${{ env.BOOTSTRAP_TAG }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXT: ${{ matrix.os == 'windows' && 'zip' || 'tar.gz' }}
         run: |
           set -euo pipefail
           mkdir -p toolchain
-          asset="rgc-${BOOTSTRAP_VERSION}-${{ matrix.target }}.${EXT}"
+          asset="rgc-${BOOTSTRAP_VERSION}-${{ matrix.target }}.tar.gz"
           gh release download "$BOOTSTRAP_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "$asset" --dir toolchain --clobber
           echo "SEED_ARCHIVE=$asset" >> "$GITHUB_ENV"
 
-      - name: Extract compiler (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Expand-Archive -Path "toolchain/$env:SEED_ARCHIVE" -DestinationPath toolchain -Force
-
-      - name: Extract compiler (Unix)
-        if: runner.os != 'Windows'
+      - name: Extract compiler
         run: tar -xzf "toolchain/$SEED_ARCHIVE" -C toolchain
 
       - name: Cache LLVM archive (Unix)
@@ -247,7 +240,7 @@ jobs:
           "$PWD/hello" > /dev/null
           "$PWD/rgc2" examples/hello.rg --emit-exports "$PWD/exports.json"
           test -s "$PWD/exports.json"
-          # pyrgc v0.0.4+ wraps only `export def` functions, so the shipped compiler
+          # pyrgc 0.4+ wraps only `export def` functions, so the shipped compiler
           # must parse the modifier and publish the flag.
           printf 'export def probe(x: int) -> int {\n    return x\n}\n' > "$PWD/export_def.rg"
           "$PWD/rgc2" "$PWD/export_def.rg" --emit-object --emit-exports "$PWD/export_def.json" -o "$PWD/export_def.o"
@@ -422,7 +415,7 @@ jobs:
           & "$root\rgc2.exe" examples\hello.rg --emit-exports "$root\exports.json"
           if ($LASTEXITCODE -ne 0) { throw "emit-exports failed" }
           if (-not (Test-Path "$root\exports.json")) { throw "exports.json not written" }
-          # pyrgc v0.0.4+ wraps only `export def` functions, so the shipped compiler
+          # pyrgc 0.4+ wraps only `export def` functions, so the shipped compiler
           # must parse the modifier and publish the flag.
           Set-Content -Path "$root\export_def.rg" -Value "export def probe(x: int) -> int {`n    return x`n}"
           & "$root\rgc2.exe" "$root\export_def.rg" --emit-object --emit-exports "$root\export_def.json" -o "$root\export_def.o"
@@ -457,8 +450,8 @@ jobs:
           Copy-Item rgc2.exe staging/rgc.exe
           Copy-Item lib staging/lib -Recurse
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path staging/rgc.exe, staging/lib `
-            -DestinationPath "dist/rgc-${{ needs.prepare.outputs.version }}-${{ matrix.target }}.zip" -Force
+          tar --format=ustar -czf "dist/rgc-${{ needs.prepare.outputs.version }}-${{ matrix.target }}.tar.gz" `
+            -C staging rgc.exe lib
 
       - name: Upload to release
         env:
