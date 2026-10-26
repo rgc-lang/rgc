@@ -326,7 +326,7 @@ public def exports_emit(path: str, stmts: @List[Stmt], src_path: str) -> int {
     if wr.is_err() {
         match wr {
             case Ok(n) => None
-            case Err(msg) => write_stderr("error: cannot write " + path + ": " + msg + "\n")
+            case Err(msg) => write_stderr("error[E0002]: cannot write " + path + ": " + msg + "\n")
         }
         return 1
     }

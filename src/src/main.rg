@@ -74,7 +74,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
                      emit_obj: bool, shared_link: bool, exports_path: str) -> int {
     r0 = read_file(src_path)
     if not r0.is_ok() {
-        write_stderr("error: cannot read " + src_path + "\n")
+        write_stderr("error[E0001]: cannot read " + src_path + "\n")
         return 1
     }
     src = r0.unwrap()
@@ -116,7 +116,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
         wr0 = write_file(output, ll_text)
         match wr0 {
             case Ok(n) => None
-            case Err(msg) => print("error: cannot write " + output + ": " + msg)
+            case Err(msg) => print("error[E0002]: cannot write " + output + ": " + msg)
         }
         return 0
     }
@@ -124,7 +124,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
     if emit_obj {
         wr = emit_object(ll_text, output)
         if wr != 0 {
-            write_stderr("codegen failed.\n")
+            write_stderr("error[E0004]: codegen failed.\n")
             return 1
         }
         return 0
@@ -133,7 +133,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
     obj_path = output + ".o"
     cc = emit_object(ll_text, obj_path)
     if cc != 0 {
-        write_stderr("codegen failed.\n")
+        write_stderr("error[E0004]: codegen failed.\n")
         return 1
     }
     qobj = shell_quote(obj_path)
@@ -155,7 +155,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
     }
     rc = system(link_cmd)
     if rc != 0 {
-        write_stderr("link failed.\n")
+        write_stderr("error[E0005]: link failed.\n")
         return 1
     }
     remove_file(obj_path)
@@ -190,7 +190,7 @@ public def run_program(src_path: str, extra_args: str) -> int {
 public def check_program(src_path: str) -> int {
     r0 = read_file(src_path)
     if not r0.is_ok() {
-        write_stderr("error: cannot read " + src_path + "\n")
+        write_stderr("error[E0001]: cannot read " + src_path + "\n")
         return 1
     }
     src = r0.unwrap()
@@ -266,7 +266,7 @@ public def main() -> int {
         }
         r0 = read_file(argv.get(2))
         if not r0.is_ok() {
-            write_stderr("error: cannot read " + argv.get(2) + "\n")
+            write_stderr("error[E0001]: cannot read " + argv.get(2) + "\n")
             return 1
         }
         src = r0.unwrap()
@@ -283,7 +283,7 @@ public def main() -> int {
     }
 
     if str_eq(first, "test") {
-        print("error: `test` is not a compiler command — the compiler only compiles")
+        print("error[E0006]: `test` is not a compiler command — the compiler only compiles")
         print("hint: tests are run by the toolchain: RGC=<compiler> rack test <path ...>")
         return 1
     }

@@ -1,15 +1,16 @@
 # RGC compiler: diagnostic collection and rustc-style rendering
 #
-# Diagnostic rendering:
-#   error: <message>
+# Diagnostic rendering (v0.0.5 unified error codes):
+#   error[E0XXX]: <message>
 #      --> <source>:<line>:<col>
 #       |
 #     n | <source line>
 #       |    ^^^
 #
-# Diagnostic entries carry a file attribute: empty = the entry file; otherwise
-# it is a module name (resolved by the loader before rendering) or a path
-# directly. Multi-file rendering is handled by diag_render_multi.
+# Every diagnostic carries a stable error code (see devdoc/RGC-0.0.5-ERRORCODES.md).
+# Entries also carry a file attribute: empty = the entry file; otherwise it is a
+# module name (resolved by the loader before rendering) or a path directly.
+# Multi-file rendering is handled by diag_render_multi.
 
 import util
 
@@ -17,6 +18,7 @@ public class DiagItem {
     line: int
     col: int
     msg: str
+    code: str
     file: str
 }
 
@@ -24,11 +26,12 @@ public def make_diag_items() -> List[DiagItem] {
     return List[DiagItem]()
 }
 
-public def diag_push(items: @var List[DiagItem], line: int, col: int, msg: str) {
+public def diag_push(items: @var List[DiagItem], code: str, line: int, col: int, msg: str) {
     it = DiagItem()
     it.line = line
     it.col = col
     it.msg = msg
+    it.code = code
     it.file = ""
     items.push(it)
 }
@@ -124,7 +127,13 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
         width = 2
     }
 
-    out = "error: " + it.msg + "\n"
+    # Unified error code: error[E0XXX]: msg; legacy entries with an empty code
+    # keep the original rustc-style "error: msg" header.
+    if it.code.len() > 0 {
+        out = "error[" + it.code + "]: " + it.msg + "\n"
+    } else {
+        out = "error: " + it.msg + "\n"
+    }
     if it.line >= 1 {
         out = out + diag_repeat(" ", width) + "--> " + source_name + ":" +
               to_string(it.line) + ":" + to_string(it.col) + "\n"

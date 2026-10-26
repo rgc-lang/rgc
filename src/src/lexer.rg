@@ -55,6 +55,7 @@ public class Lexer {
     err_line: int
     err_col: int
     err_msg: str
+    err_code: str
 }
 
 # Construct a lexer.
@@ -69,6 +70,7 @@ public def make_lexer(src: str) -> Lexer {
     lx.err_line = 0
     lx.err_col = 0
     lx.err_msg = ""
+    lx.err_code = ""
     return lx
 }
 
@@ -128,6 +130,7 @@ public def lexer_skip_ws(lx: @var Lexer) {
                     lx.err_line = bline
                     lx.err_col = bcol
                     lx.err_msg = "unterminated block comment"
+                    lx.err_code = "E0101"
                 }
                 return
             }
@@ -213,6 +216,7 @@ public def lexer_lex_string(lx: @var Lexer) -> Token {
                 lx.err_line = line
                 lx.err_col = col
                 lx.err_msg = "unterminated string literal"
+                lx.err_code = "E0102"
             }
             return make_token(TokStringLit(), text, line, col)
         }

@@ -111,6 +111,7 @@ public def fmt_source(src: str, errs: @var List[DiagItem]) -> str {
         it.line = lx.err_line
         it.col = lx.err_col
         it.msg = lx.err_msg
+        it.code = lx.err_code
         it.file = ""
         errs.push(it)
         return src
@@ -238,7 +239,7 @@ public def fmt_files(paths: List[str], check_only: bool) -> int {
         p = files.get(i)
         r = read_file(p)
         if r.is_err() {
-            write_stderr("error: cannot read " + p + "\n")
+            write_stderr("error[E0001]: cannot read " + p + "\n")
             rc = 1
             i = i + 1
             continue
@@ -263,7 +264,7 @@ public def fmt_files(paths: List[str], check_only: bool) -> int {
                     rc = 1
                     match wr {
                         case Ok(n) => None
-                        case Err(msg) => print("error: cannot write " + p + ": " + msg)
+                        case Err(msg) => print("error[E0002]: cannot write " + p + ": " + msg)
                     }
                     pass
                 } else {

@@ -20,6 +20,7 @@ public class Parser {
     err_line: int
     err_col: int
     err_msg: str
+    err_code: str
 }
 
 public def make_parser(toks: List[Token]) -> Parser {
@@ -30,6 +31,7 @@ public def make_parser(toks: List[Token]) -> Parser {
     p.err_line = 0
     p.err_col = 0
     p.err_msg = ""
+    p.err_code = ""
     return p
 }
 
@@ -76,25 +78,28 @@ public def parser_expect(p: @var Parser, k: TokenKind, what: str) -> Token {
         p.err_line = t.line
         p.err_col = t.col
         p.err_msg = "expected " + what + ", found '" + t.text + "'"
+        p.err_code = "E0201"
     }
     p.ok = False
     return t
 }
 
-public def parser_fail(p: @var Parser, msg: str) {
+public def parser_fail(p: @var Parser, code: str, msg: str) {
     if p.err_msg.len() == 0 {
         # No position: when the caller's message already contains "at line:col", the renderer only labels the file.
         p.err_msg = msg
+        p.err_code = code
     }
     p.ok = False
 }
 
 # Positioned failure: the renderer shows the source snippet and caret based on this.
-public def parser_fail_at(p: @var Parser, line: int, col: int, msg: str) {
+public def parser_fail_at(p: @var Parser, code: str, line: int, col: int, msg: str) {
     if p.err_msg.len() == 0 {
         p.err_line = line
         p.err_col = col
         p.err_msg = msg
+        p.err_code = code
     }
     p.ok = False
 }
@@ -209,8 +214,9 @@ public def parser_parse_stmt(p: @var Parser) -> Stmt {
             s.is_public = True
             return s
         }
-        parser_fail(p, "expected 'def'/'class'/'enum'/'interface' after 'public' at " +
-                   to_string(t.line) + ":" + to_string(t.col))
+        parser_fail(p, "E0206",
+                    "expected 'def'/'class'/'enum'/'interface' after 'public' at " +
+                    to_string(t.line) + ":" + to_string(t.col))
         return make_expr_stmt(none_expr(), t.line, t.col)
     }
     # async def: a thread-backed task (no async methods / async main).
@@ -353,7 +359,8 @@ public def parser_parse_interface_def(p: @var Parser) -> Stmt {
     while not parser_check(p, TokRBrace()) and not parser_check(p, TokEof()) {
         t = parser_peek(p)
         if not parser_match(p, TokDef()) {
-            parser_fail(p, "expected method declaration in interface at " +
+            parser_fail(p, "E0207",
+                       "expected method declaration in interface at " +
                        to_string(t.line) + ":" + to_string(t.col))
             break
         }
@@ -400,7 +407,8 @@ public def parser_parse_fn_def(p: @var Parser) -> Stmt {
                 parser_advance(p)
                 pt = parser_parse_type_expr(p)
             } elif not str_eq(pn, "self") {
-                parser_fail(p, "expected ':' after parameter '" + pn + "'")
+                parser_fail(p, "E0208",
+                           "expected ':' after parameter '" + pn + "'")
             }
             params.push(make_param(pn, pt))
             if not parser_match(p, TokComma()) {
@@ -586,7 +594,7 @@ public def parser_parse_type_expr(p: @var Parser) -> TypeExpr {
         inner.is_mut_borrow = is_mut
         return inner
     }
-    parser_fail_at(p, t.line, t.col, "expected type annotation")
+    parser_fail_at(p, "E0203", t.line, t.col, "expected type annotation")
     return type_expr("")
 }
 
@@ -614,7 +622,7 @@ public def parser_parse_assignment(p: @var Parser) -> Expr {
         col = lhs.col
         return make_member_assign(lhs, rhs, line, col)
     } else {
-        parser_fail_at(p, lhs.line, lhs.col, "invalid assignment target")
+        parser_fail_at(p, "E0204", lhs.line, lhs.col, "invalid assignment target")
         return lhs
     }
 }
@@ -890,7 +898,7 @@ public def parser_parse_primary(p: @var Parser) -> Expr {
         parser_expect(p, TokRParen(), "')'")
         return inner
     }
-    parser_fail_at(p, t.line, t.col, "unexpected token '" + t.text + "'")
+    parser_fail_at(p, "E0202", t.line, t.col, "unexpected token '" + t.text + "'")
     return none_expr()
 }
 
@@ -1028,7 +1036,7 @@ public def parser_parse_match_expr(p: @var Parser) -> Expr {
     e.subject = one_expr(subj)
     while not parser_check(p, TokRBrace()) and not parser_check(p, TokEof()) {
         if not parser_match(p, TokCase()) {
-            parser_fail(p, "expected 'case' in match")
+            parser_fail(p, "E0209", "expected 'case' in match")
             break
         }
         pat = parser_parse_pattern(p)
@@ -1092,7 +1100,7 @@ public def parser_parse_pattern(p: @var Parser) -> Pattern {
         }
         return make_pattern_var(t.text)
     }
-    parser_fail_at(p, t.line, t.col, "invalid pattern")
+    parser_fail_at(p, "E0205", t.line, t.col, "invalid pattern")
     return make_pattern_wildcard()
 }
 

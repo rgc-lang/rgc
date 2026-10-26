@@ -500,11 +500,126 @@ public def make_sema() -> Sema {
     return s
 }
 
+# Unified error-code assignment for semantic diagnostics (v0.0.5).
+# Every sema_error message maps to a stable code by matching its literal
+# prefix/distinctive substring. Codes are documented in
+# devdoc/RGC-0.0.5-ERRORCODES.md and grouped by category.
+def sema_error_code_for_msg(msg: str) -> str {
+    # ---- E03xx module system / visibility / ambiguity ----
+    if msg.startswith("function `") and msg.contains(" is ambiguous:") { return "E0306" }
+    if msg.startswith("type `") and msg.contains(" is ambiguous:") { return "E0307" }
+    if msg.contains(" is private to module `") { return "E0305" }
+    if msg.startswith("module binding ") { return "E0302" }
+    if msg.startswith("cannot re-export private type") { return "E0303" }
+    if msg.startswith("cannot re-export ") { return "E0304" }
+    if msg.startswith("module `") and msg.contains(" has no public function") { return "E0308" }
+    # ---- E04xx type errors ----
+    if msg.startswith("type mismatch:") { return "E0401" }
+    if msg.startswith("type `") and msg.contains(" redefined") { return "E0402" }
+    if msg.startswith("duplicate interface") { return "E0403" }
+    if msg.startswith("if branches have mismatched types:") { return "E0404" }
+    if msg.contains(" returns `") and msg.contains("`, expected `") { return "E0405" }
+    if msg.startswith("operator '+' cannot concatenate") { return "E0406" }
+    if msg.startswith("cannot access member ") and msg.contains(" on non-class value") { return "E0407" }
+    if msg.startswith("cannot access member ") and msg.contains(" on enum") { return "E0408" }
+    if msg.startswith("unknown field ") { return "E0409" }
+    # ---- E05xx expression name resolution ----
+    if msg.startswith("use of undeclared variable") { return "E0501" }
+    if msg.startswith("call to unknown function") { return "E0502" }
+    # ---- E06xx ownership / move ----
+    if msg.startswith("use of moved value:") { return "E0601" }
+    if msg.startswith("cannot move out of ") { return "E0602" }
+    # ---- E07xx borrow checker ----
+    if msg.startswith("cannot borrow ") { return "E0701" }
+    if msg.startswith("cannot access ") { return "E0702" }
+    if msg.startswith("cannot use ") { return "E0702" }
+    if msg.startswith("cannot assign through shared borrow") { return "E0703" }
+    if msg.startswith("borrow target must be a variable") { return "E0704" }
+    if msg.startswith("cannot copy a borrow handle") { return "E0705" }
+    # ---- E08xx generics / interfaces ----
+    if msg.startswith("type parameter ") and msg.contains(" inferred inconsistently") { return "E0801" }
+    if msg.startswith("cannot infer type parameter") { return "E0802" }
+    if msg.contains(" does not implement interface") and msg.contains(" missing method") { return "E0804" }
+    if msg.contains(" does not match interface") { return "E0805" }
+    if msg.startswith("unknown interface") { return "E0806" }
+    if msg.contains(" is not a generic class") { return "E0807" }
+    if msg.startswith("class `") and msg.contains(" expects ") and msg.contains(" type arguments") { return "E0808" }
+    if msg.contains(" is not a generic enum") { return "E0809" }
+    if msg.startswith("enum `") and msg.contains(" expects ") and msg.contains(" type arguments") { return "E0810" }
+    if msg.contains(" does not implement interface") { return "E0803" }
+    # ---- E10xx enum / match / patterns (variant-argument check first) ----
+    if msg.contains(" to variant `") { return "E1002" }
+    if msg.startswith("unknown variant ") { return "E1001" }
+    if msg.startswith("match arms have mismatched types:") { return "E1003" }
+    # ---- E11xx control flow ----
+    if msg.startswith("`break` outside of a loop") { return "E1101" }
+    if msg.startswith("`continue` outside of a loop") { return "E1102" }
+    # ---- E12xx async / Task ----
+    if msg.startswith("extern function ") and msg.contains(" cannot be async") { return "E1201" }
+    if msg.startswith("async methods are not supported") { return "E1202" }
+    if msg.startswith("`main` cannot be async;") { return "E1203" }
+    if msg.startswith("async function ") and msg.contains(" cannot return a borrow") { return "E1204" }
+    if msg.startswith("async function ") and msg.contains(" cannot take borrow parameter") { return "E1205" }
+    if msg.startswith("`await` is only allowed inside an async function") { return "E1206" }
+    if msg.startswith("`await` expects a Task value") { return "E1207" }
+    if msg.startswith("asyncio.run() expects 1 argument") { return "E1208" }
+    if msg.startswith("asyncio.run() expects a Task value") { return "E1209" }
+    if msg.startswith("asyncio.cancelled() takes no arguments") { return "E1210" }
+    if msg.startswith("cannot await ") { return "E1211" }
+    if msg.startswith("cannot gather ") { return "E1212" }
+    if msg.startswith("asyncio.gather() expects 1 argument") { return "E1213" }
+    if msg.startswith("asyncio.gather() expects List[Task[T]]") { return "E1214" }
+    if msg.startswith("asyncio.gather() does not support tasks without a value") { return "E1215" }
+    if msg.startswith("asyncio.wait_any() expects 1 argument") { return "E1216" }
+    if msg.startswith("asyncio.wait_any() expects List[Task[T]]") { return "E1217" }
+    if msg.startswith("Task values can only be created") { return "E1218" }
+    if msg.startswith("Task.wait() expects 1 argument (milliseconds)") { return "E1219" }
+    if msg.startswith("Task.wait() expects int milliseconds") { return "E1220" }
+    if msg.startswith("Task.") and msg.contains("() takes no arguments") { return "E1221" }
+    # ---- E09xx function calls / arguments ----
+    if msg.contains(" arguments, got ") { return "E0901" }
+    if msg.startswith("argument ") and msg.contains(" has type ") { return "E0902" }
+    # ---- E13xx format strings (must precede the generic builtin-arity check below) ----
+    if msg.startswith("format() expects at least 1 argument") { return "E1301" }
+    if msg.startswith("format() expects a string literal") { return "E1302" }
+    if msg.startswith("unmatched `{` in format string") { return "E1303" }
+    if msg.startswith("unmatched `}` in format string") { return "E1304" }
+    if msg.startswith("format() expects ") and msg.contains(" placeholder argument(s)") { return "E1305" }
+    if msg.startswith("format() argument must be int/float/bool/str") { return "E1306" }
+    if msg.startswith("invalid format specifier `") { return "E1307" }
+    # ---- E09xx builtin/method arity and argument kinds ----
+    if msg.contains("() expects ") and msg.contains(" argument(s)") { return "E0903" }
+    if msg.contains("() expects int/float, found") { return "E0904" }
+    if msg.contains("() argument ") and msg.contains(" expects ") { return "E0905" }
+    # ---- E14xx FFI / extern ----
+    if msg.startswith("extern function ") and msg.contains(" cannot be generic") { return "E1401" }
+    if msg.startswith("extern function ") and msg.contains(" return type must be") { return "E1402" }
+    if msg.startswith("extern function ") and msg.contains(" parameter ") and msg.contains(" must be") { return "E1403" }
+    # ---- E15xx builtins / stdlib methods ----
+    if msg.contains("() is not supported for custom element type") { return "E1501" }
+    if msg.startswith("to_string() expects 1 argument") { return "E1502" }
+    if msg.startswith("to_string() expects int/float/bool") { return "E1503" }
+    if msg.startswith("chr() expects 1 argument") { return "E1504" }
+    if msg.startswith("chr() expects int, found") { return "E1505" }
+    if msg.startswith("args() expects 0 arguments") { return "E1506" }
+    if msg.startswith("range() can only be used as a for-loop iterable") { return "E1507" }
+    if msg.startswith("range() expects 1 to 3 arguments") { return "E1508" }
+    if msg.startswith("range() expects int, found") { return "E1509" }
+    # ---- E16xx `?` operator / Result ----
+    if msg.startswith("`?` requires a Result value") { return "E1601" }
+    if msg.startswith("`?` can only be used in a function returning Result") { return "E1602" }
+    if msg.startswith("`?` error type mismatch:") { return "E1603" }
+    if msg.startswith("`?` does not support custom success payload") { return "E1604" }
+    # Unclassified fallback (should not happen in practice).
+    return "E0000"
+}
+
 public def sema_error(s: @var Sema, line: int, col: int, msg: str) {
     it = DiagItem()
     it.line = line
     it.col = col
     it.msg = msg
+    it.code = sema_error_code_for_msg(msg)
     it.file = s.current_module
     s.diag_items.push(it)
     s.diag_errors = s.diag_errors + 1

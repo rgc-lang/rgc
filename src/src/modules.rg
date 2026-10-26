@@ -256,12 +256,13 @@ public def make_module_loader(src_path: str) -> ModuleLoader {
 # Record a lexical/parse failure: the structured item goes into err_items (LSP),
 # and the rendered text goes into error_msg (CLI printing). When line < 1, only the file is labeled.
 def loader_fail(l: @var ModuleLoader, path: str, src: str,
-                line: int, col: int, msg: str) {
+                line: int, col: int, msg: str, code: str) {
     l.ok = False
     it = DiagItem()
     it.line = line
     it.col = col
     it.msg = msg
+    it.code = code
     it.file = path
     items = List[DiagItem]()
     items.push(it)
@@ -359,7 +360,7 @@ public def loader_load(l: @var ModuleLoader, name: str) {
             return
         }
         l.ok = False
-        l.error_msg = "error: cannot read module `" + name + "` at " + mf.path + "\n"
+        l.error_msg = "error[E0301]: cannot read module `" + name + "` at " + mf.path + "\n"
         return
     }
     path = mf.path
@@ -381,13 +382,13 @@ public def loader_load(l: @var ModuleLoader, name: str) {
     lx = make_lexer(src)
     toks = lexer_tokenize(@var lx)
     if not lx.ok {
-        loader_fail(l, path, src, lx.err_line, lx.err_col, lx.err_msg)
+        loader_fail(l, path, src, lx.err_line, lx.err_col, lx.err_msg, lx.err_code)
         return
     }
     p = make_parser(toks)
     stmts = parser_parse_program(@var p)
     if not p.ok {
-        loader_fail(l, path, src, p.err_line, p.err_col, p.err_msg)
+        loader_fail(l, path, src, p.err_line, p.err_col, p.err_msg, p.err_code)
         return
     }
 
@@ -421,13 +422,13 @@ public def loader_load_entry(l: @var ModuleLoader, src: str) -> List[Stmt] {
     lx = make_lexer(src)
     toks = lexer_tokenize(@var lx)
     if not lx.ok {
-        loader_fail(l, l.entry_path, src, lx.err_line, lx.err_col, lx.err_msg)
+        loader_fail(l, l.entry_path, src, lx.err_line, lx.err_col, lx.err_msg, lx.err_code)
         return List[Stmt]()
     }
     p = make_parser(toks)
     stmts = parser_parse_program(@var p)
     if not p.ok {
-        loader_fail(l, l.entry_path, src, p.err_line, p.err_col, p.err_msg)
+        loader_fail(l, l.entry_path, src, p.err_line, p.err_col, p.err_msg, p.err_code)
         return List[Stmt]()
     }
     i = 0
