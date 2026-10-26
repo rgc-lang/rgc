@@ -1,7 +1,7 @@
-# FFI 与 pyrig —— C 互操作与 Python 绑定
+# FFI 与 pyrgc —— C 互操作与 Python 绑定
 
 > 状态：v0.3（Phase 10 首批落地 + vectorcall 胶水 + str 所有权）
-> 组成：编译器 `extern def`（C ABI 外部函数声明）+ `--emit-exports`（签名/所有权元数据）+ `pyrig` 官方 Python 绑定框架（CPython C API）
+> 组成：编译器 `extern def`（C ABI 外部函数声明）+ `--emit-exports`（签名/所有权元数据）+ `pyrgc` 官方 Python 绑定框架（CPython C API）
 
 ---
 
@@ -49,8 +49,8 @@ def main() {
 
 | 标志 | 作用 |
 |------|------|
-| `--emit-object` | 只生成目标文件（`.o`），不链接（pyrig 构建流程使用） |
-| `--shared` | 链接为共享库（Unix：`g++ -shared -fPIC`；Windows：`g++ -shared`，函数带 LLVM `dllexport`），供 pyrig / 插件场景使用 |
+| `--emit-object` | 只生成目标文件（`.o`），不链接（pyrgc 构建流程使用） |
+| `--shared` | 链接为共享库（Unix：`g++ -shared -fPIC`；Windows：`g++ -shared`，函数带 LLVM `dllexport`），供 pyrgc / 插件场景使用 |
 | `--emit-exports <json>` | 额外写出入口文件全部顶层函数的签名与 `str` 返回值所有权分类（绑定生成器使用） |
 
 RGC 输出的目标文件是 PIC（位置无关），可直接参与共享库链接。
@@ -63,7 +63,7 @@ Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`�
 `--emit-llvm` 可以同时使用，也不受后端崩溃影响：
 
 ```json
-{"format": 1, "source": "examples/pyrig_demo.rg",
+{"format": 1, "source": "examples/pyrgc_demo.rg",
  "functions": [{"name": "greet", "public": true,
                 "params": [{"name": "name", "type": "str"}],
                 "ret": "str", "str_ret": "owned"}]}
@@ -79,15 +79,15 @@ Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`�
 立即释放嵌套的中间缓冲区（它们是刚 malloc 出来的一次性临时值，没有任何
 其他引用），因此链长不再影响常驻内存：1/2/4 段链的峰值 RSS 修复前为
 7.3/13.6/26.1 MB，修复后同为 7.4 MB 基线。最外层缓冲区仍然由调用方
-（pyrig 胶水或 RGC 变量作用域）负责。
+（pyrgc 胶水或 RGC 变量作用域）负责。
 
 ---
 
-## 2. pyrig：Python 绑定框架
+## 2. pyrgc：Python 绑定框架
 
-`pyrig` 是 RGC 的官方 Python 绑定框架，定位对齐 pybind11 / PyO3：
+`pyrgc` 是 RGC 的官方 Python 绑定框架，定位对齐 pybind11 / PyO3：
 把 RGC 函数导出为 **CPython 扩展模块**，Python 侧直接 `import`。
-实现直接走 **CPython C API**：pyrig 构建器先用
+实现直接走 **CPython C API**：pyrgc 构建器先用
 `rgc --emit-object --emit-exports` 编译 RGC 代码并取回函数元数据，
 再为每个导出函数生成 **`METH_FASTCALL`（vectorcall）** C 胶水——
 显式参数个数检查 + 逐个参数类型提取 + 返回值构造 +
@@ -104,8 +104,8 @@ Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`�
 ### 2.1 RGC 侧
 
 ```python
-# examples/pyrig_demo.rg
-import pyrig
+# examples/pyrgc_demo.rg
+import pyrgc
 
 public def add(a: int, b: int) -> int {
     return a + b
@@ -120,54 +120,54 @@ public def is_even(n: int) -> bool {
 }
 
 # pybind11: PYBIND11_MODULE(demo, m) { m.def("add", &add); ... }
-pyrig.export("add")
-pyrig.export("greet")
-pyrig.export("is_even")
-# 指定不同名：pyrig.export("py_add", "add")
+pyrgc.export("add")
+pyrgc.export("greet")
+pyrgc.export("is_even")
+# 指定不同名：pyrgc.export("py_add", "add")
 ```
 
 - 导出函数必须写在**入口文件**且带**显式类型注解**（胶水需要 C 签名）。
-- `pyrig.export("名")` 是编译期标记（顶层语句不参与代码生成），
-  由 pyrig 构建器静态扫描，**决定导出哪些函数**；签名与类型则来自
+- `pyrgc.export("名")` 是编译期标记（顶层语句不参与代码生成），
+  由 pyrgc 构建器静态扫描，**决定导出哪些函数**；签名与类型则来自
   `--emit-exports` 元数据，两边不重复解析源码。运行时为空操作。
 - 支持的导出类型：`int` / `float` / `bool` / `str` / `None`。
 
 ### 2.2 安装、构建与使用
 
-pyrig 以标准 Python 包分发（参考 PyO3/maturin 的模式，`pyrig/pyproject.toml`）：
+pyrgc 以标准 Python 包分发（参考 PyO3/maturin 的模式，`pyrgc/pyproject.toml`）：
 
 ```bash
-pip install -e pyrig/                 # 或 PYTHONPATH=pyrig python3 -m pyrig
+pip install -e pyrgc/                 # 或 PYTHONPATH=pyrgc python3 -m pyrgc
 ```
 
 maturin 风格工作流：
 
 ```bash
-pyrig new string_sum                  # 脚手架：string_sum.rg + pyproject.toml
-cd string_sum && pyrig build          # -> dist/string_sum.<ext-suffix>.so
-pyrig develop                         # 构建并安装到激活的 virtualenv
+pyrgc new string_sum                  # 脚手架：string_sum.rg + pyproject.toml
+cd string_sum && pyrgc build          # -> dist/string_sum.<ext-suffix>.so
+pyrgc develop                         # 构建并安装到激活的 virtualenv
 ```
 
 直接构建（仓库根目录）：
 
 ```bash
-pyrig build examples/pyrig_demo.rg -n pyrig_demo -o build/pyrig
-#   built: build/pyrig/pyrig_demo.cpython-313-x86_64-linux-gnu.so (5 exports: add, greet, is_even, dist, say_hi)
+pyrgc build examples/pyrgc_demo.rg -n pyrgc_demo -o build/pyrgc
+#   built: build/pyrgc/pyrgc_demo.cpython-313-x86_64-linux-gnu.so (5 exports: add, greet, is_even, dist, say_hi)
 
 python3 -c "
-import sys; sys.path.insert(0, 'build/pyrig')
-import pyrig_demo
-print(pyrig_demo.add(3, 4))        # 7
-print(pyrig_demo.greet('rgc'))     # hello, rgc!
-print(pyrig_demo.is_even(10))      # True
-print(pyrig_demo.add.__doc__)      # 函数上方 # 注释成为 __doc__（对齐 PyO3 doc comment）
+import sys; sys.path.insert(0, 'build/pyrgc')
+import pyrgc_demo
+print(pyrgc_demo.add(3, 4))        # 7
+print(pyrgc_demo.greet('rgc'))     # hello, rgc!
+print(pyrgc_demo.is_even(10))      # True
+print(pyrgc_demo.add.__doc__)      # 函数上方 # 注释成为 __doc__（对齐 PyO3 doc comment）
 "
 ```
 
 `build` 选项：`-n` 模块名（默认文件名）、`-o` 输出目录、`--rgc` 编译器路径
 （默认 `RGC` env / `PATH` / 仓库 `build/rgc`）、`--cc` C 编译器（默认 `cc`）、
-`--debug` 关闭优化（`rgc -O0`）。项目内 `pyrig build` 自动向上发现
-`pyproject.toml` 的 `[tool.pyrig]` 段（`name`/`source`/`out-dir`/`rgc`/`cc`/`release`/`link-args`）。
+`--debug` 关闭优化（`rgc -O0`）。项目内 `pyrgc build` 自动向上发现
+`pyproject.toml` 的 `[tool.pyrgc]` 段（`name`/`source`/`out-dir`/`rgc`/`cc`/`release`/`link-args`）。
 
 ### 2.3 类型映射（RGC ↔ CPython）
 
@@ -196,7 +196,7 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
 | `owned` | 拼接（`a + b`） | 构造 Python 对象后 `free` |
 | `static` | 字符串字面量 | 不释放（rodata） |
 | `borrowed` | 参数，或参数构成的链 | 不释放（调用方的缓冲区） |
-| `unknown` | 其余一切，如调用返回值 | 不释放，`pyrig build` 打印告警 |
+| `unknown` | 其余一切，如调用返回值 | 不释放，`pyrgc build` 打印告警 |
 
 `owned` 只由 `str` 类型表达式上的 `+` 推出——它必然降级为 `irg_string_concat`
 （一次新 `malloc`），而 RGC 没有运算符重载，所以这个推断是可靠的。
@@ -215,21 +215,21 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
   改成返回拼接结果即为 `owned`，不再泄漏。
 - 无关键字参数、默认值参数；无 `PyErr` 异常传播（RGC 错误建议返回
   `Result` 并在 RGC 层处理）。
-- `pyrig.export("py 名", "rgc 函数名")` 改名导出时，两函数的签名必须
+- `pyrgc.export("py 名", "rgc 函数名")` 改名导出时，两函数的签名必须
   ABI 兼容（胶水按被导出函数的 C 签名声明）。
 
-### 2.6 pyrig 包结构
+### 2.6 pyrgc 包结构
 
 | 文件 | 说明 |
 |------|------|
-| `pyrig/pyproject.toml` | PEP 621 元数据 + `pyrig` console script |
-| `pyrig/pyrig/shim.py` | `pyrig.export` 扫描、`--emit-exports` 元数据解析、vectorcall C 胶水生成（含 docstring 与所有权分类） |
-| `pyrig/pyrig/builder.py` | 构建编排、`[tool.pyrig]` 发现与解析 |
-| `pyrig/pyrig/scaffold.py` | `pyrig new` 项目模板 |
-| `pyrig/pyrig/cli.py` | `new` / `build` / `develop` / `--version` |
-| `pyrig/tests/` | pytest：胶水生成单测 + rgc 端到端（无 rgc 自动跳过） |
+| `pyrgc/pyproject.toml` | PEP 621 元数据 + `pyrgc` console script |
+| `pyrgc/pyrgc/shim.py` | `pyrgc.export` 扫描、`--emit-exports` 元数据解析、vectorcall C 胶水生成（含 docstring 与所有权分类） |
+| `pyrgc/pyrgc/builder.py` | 构建编排、`[tool.pyrgc]` 发现与解析 |
+| `pyrgc/pyrgc/scaffold.py` | `pyrgc new` 项目模板 |
+| `pyrgc/pyrgc/cli.py` | `new` / `build` / `develop` / `--version` |
+| `pyrgc/tests/` | pytest：胶水生成单测 + rgc 端到端（无 rgc 自动跳过） |
 
-构建产物中 `pyrig_shim_<module>.c` 与 `pyrig_<module>.exports.json`
+构建产物中 `pyrgc_shim_<module>.c` 与 `pyrgc_<module>.exports.json`
 与 `.so` 一同保留，便于排查胶水与签名问题。
 
 ### 2.7 回归测试
@@ -238,8 +238,8 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
 - `--emit-exports`：`tests/exports/suite.rg`（签名 + 11 条所有权规则逐条钉死）。
 - 字符串拼接生命周期：`tests/unit/str_concat.rg`（嵌套/右结合/长链/循环累加/
   作为实参/跨函数返回，共 8 例）。
-- pyrig 端到端：`tests/pyrig/suite.rg`（由 `rack test` 运行；构建 + CPython 实际 import 断言），
-  另有 `pyrig/tests/`（`PYTHONPATH=pyrig python3 -m pytest pyrig/tests/`），
+- pyrgc 端到端：`tests/pyrgc/suite.rg`（由 `rack test` 运行；构建 + CPython 实际 import 断言），
+  另有 `pyrgc/tests/`（`PYTHONPATH=pyrgc python3 -m pytest pyrgc/tests/`），
   其中包含四种所有权分类的行为断言与 20 万次调用的 RSS 增长断言。
 
 ## 3. 实现位置
@@ -250,6 +250,6 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
 | `--emit-object` / `--shared` / `--emit-exports` | `src/src/main.rg` |
 | 导出元数据与 str 所有权分析 | `src/src/exports.rg` |
 | 拼接临时缓冲区释放 | `src/src/ir.rg`（`irg_codegen_binary` / `irg_is_temp_concat`） |
-| pyrig 运行时模块 | `lib/pyrig.rg` |
-| pyrig Python 包（构建器/CLI/脚手架） | `pyrig/`（`pip install -e pyrig/`） |
-| 示例 | `examples/ffi.rg`、`examples/pyrig_demo.rg` |
+| pyrgc 运行时模块 | `lib/pyrgc.rg` |
+| pyrgc Python 包（构建器/CLI/脚手架） | `pyrgc/`（`pip install -e pyrgc/`） |
+| 示例 | `examples/ffi.rg`、`examples/pyrgc_demo.rg` |

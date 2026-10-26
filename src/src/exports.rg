@@ -1,6 +1,6 @@
 # RGC compiler: `rgc --emit-exports` — function metadata for binding generators
 #
-# A binding generator (pyrig) must not re-derive signatures by scanning source text: the scanner
+# A binding generator (pyrgc) must not re-derive signatures by scanning source text: the scanner
 # and the type checker drift apart silently. The compiler already holds the checked AST, so it
 # publishes every entry-file function's signature plus the one fact a C shim cannot recover on
 # its own — whether a returned `str` buffer was freshly allocated and may therefore be freed.

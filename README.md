@@ -42,7 +42,7 @@ LLVM and the memory safety of Rust-style ownership checking.
 - 🐍 **Python-friendly** — familiar `def`, `if/elif/else`, `for`, `while`, `match`, and `#` comments, so Python developers feel at home from day one.
 - ⚡ **Native performance** — LLVM backend with `-O0` / `-O2` optimization and DWARF debug info.
 - 🔒 **Memory safety at compile time** — ownership and borrow checking (`@` / `@var`) catch use-after-move and dangling references before you run.
-- 🧑‍💻 **Full toolchain** — package manager ([`rack`](https://github.com/rgc-lang/rack)), language server, VS Code extension, and Python bindings ([`pyrig`](https://github.com/rgc-lang/pyrig)).
+- 🧑‍💻 **Full toolchain** — package manager ([`rack`](https://github.com/rgc-lang/rack)), language server, VS Code extension, and Python bindings ([`pyrgc`](https://github.com/rgc-lang/pyrgc)).
 
 ### Key Features
 
@@ -52,7 +52,7 @@ LLVM and the memory safety of Rust-style ownership checking.
 - ⚡ LLVM backend with `-O0` / `-O2` optimization and DWARF debug info.
 - 📦 Module system (`import` + `public`) and FFI (`extern def`).
 - 📚 Standard library: strings, lists, JSON, regex, networking (TCP/UDP/HTTP/HTTPS), async/await, and TLS.
-- 🧩 Python bindings via [pyrig](https://github.com/rgc-lang/pyrig).
+- 🧩 Python bindings via [pyrgc](https://github.com/rgc-lang/pyrgc).
 - 📦 Package management via [rack](https://github.com/rgc-lang/rack).
 
 ## 🚀 Quick Start
@@ -105,12 +105,12 @@ identical self-IR.
 
 - [Language design](docs/compiler/DESIGN.md)
 - [Standard library](docs/compiler/STDLIB.md)
-- [FFI and pyrig](docs/compiler/FFI.md)
+- [FFI and pyrgc](docs/compiler/FFI.md)
 
 ### Ecosystem
 
 - [rack](https://github.com/rgc-lang/rack) — package manager and build system
-- [pyrig](https://github.com/rgc-lang/pyrig) — CPython extension bindings
+- [pyrgc](https://github.com/rgc-lang/pyrgc) — CPython extension bindings
 - [analyzer](https://github.com/rgc-lang/analyzer) — `rgc-analyzer` language server and the RGC VS Code extension
 
 ## 🤝 Contributing

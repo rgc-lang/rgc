@@ -4,7 +4,7 @@
 #   rgc <file.rg> [-o <output>] [-O|-O2|-O0] [-g]   # compile and link directly
 #   rgc run <file.rg> [args...]     # compile and run
 #   rgc ast-dump <file.rg>          # parse only
-#   rgc <file.rg> --emit-exports <json>   # function metadata for binding generators (pyrig)
+#   rgc <file.rg> --emit-exports <json>   # function metadata for binding generators (pyrgc)
 #
 # rgc only compiles: test running lives in the toolchain (`rack test`, see ../rack).
 #
@@ -67,8 +67,8 @@ def render_sema_errors(loader: @var ModuleLoader, s: @var Sema, src_path: str, s
 
 # Compile and link. opt_level: 0=no optimization, 2=O2; debug_info: 1=emit DWARF.
 # emit_obj: generate an object file only, without linking (--emit-object);
-# shared_link: link as a shared library (--shared, used by pyrig to build Python extensions);
-# exports_path: also write function metadata as JSON (--emit-exports, consumed by pyrig).
+# shared_link: link as a shared library (--shared, used by pyrgc to build Python extensions);
+# exports_path: also write function metadata as JSON (--emit-exports, consumed by pyrgc).
 public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
                      link_args: str, opt_level: int, debug_info: bool,
                      emit_obj: bool, shared_link: bool, exports_path: str) -> int {

@@ -1,23 +1,23 @@
-# pyrig — RGC's official Python binding framework
+# pyrgc — RGC's official Python binding framework
 #
 # Modeled after the pybind11 experience, implemented directly on the CPython C API:
-# RGC functions are wrapped by the pyrig builder into a CPython extension module (.so) that Python can import directly.
+# RGC functions are wrapped by the pyrgc builder into a CPython extension module (.so) that Python can import directly.
 #
 # Usage (RGC side):
-#   import pyrig
+#   import pyrgc
 #
 #   public def add(a: int, b: int) -> int {
 #       return a + b
 #   }
 #
 #   # pybind11 equivalent of m.def("add", &add)
-#   pyrig.export("add")
+#   pyrgc.export("add")
 #
 # Building (generates the CPython C API glue and links a shared library):
-#   python3 pyrig/pyrig.py build examples/pyrig_demo.rg -n demo -o build/
+#   python3 pyrgc/pyrgc.py build examples/pyrgc_demo.rg -n demo -o build/
 #
-# pyrig.export is only a compile-time marker: top-level statements do not participate in code generation;
-# the pyrig builder statically scans them and generates the PyMethodDef / PyInit_<name> glue.
+# pyrgc.export is only a compile-time marker: top-level statements do not participate in code generation;
+# the pyrgc builder statically scans them and generates the PyMethodDef / PyInit_<name> glue.
 
 # Binding marker: declares that a function is exported as a Python-callable object.
 #   export("py name")                  -> exports the RGC function with the same name

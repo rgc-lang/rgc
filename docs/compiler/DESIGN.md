@@ -214,7 +214,7 @@ def main() {
 - **类型映射**：参数 `int`=i64 / `float`=double / `bool`=_Bool(i8) / `str`=ptr；返回 `int`=C int(i32，调用点 sext 回 64 位) / `bool` 按 C 真值语义（非零即真）/ `None`=void。
 - **限制**：不能有函数体、不能泛型、不支持自定义类型与借用。
 - **`--emit-object`**：只产出目标文件；**`--shared`**：链接为共享库（输出为 PIC）。
-- **pyrig**：官方 Python 绑定框架（CPython C API），`pyrig.export` 标记 + 胶水生成，详见 [FFI.md](FFI.md)。
+- **pyrgc**：官方 Python 绑定框架（CPython C API），`pyrgc.export` 标记 + 胶水生成，详见 [FFI.md](FFI.md)。
 
 ## 4. 类型系统
 

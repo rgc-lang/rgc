@@ -40,7 +40,7 @@ RGC 的目标是：让 Python 开发者感到亲切，同时提供 LLVM 级别�
 - 🐍 **Python 友好**——`def`、`if/elif/else`、`for`、`while`、`match`、`#` 注释，语法熟悉，上手即用。
 - ⚡ **原生性能**——LLVM 后端，支持 `-O0` / `-O2` 优化与 DWARF 调试信息。
 - 🔒 **编译期内存安全**——所有权与借用检查（`@` / `@var`）在运行前就捕获 use-after-move 与悬垂引用。
-- 🧑‍💻 **完整工具链**——包管理器（[`rack`](https://github.com/rgc-lang/rack)）、语言服务器、VS Code 扩展、Python 绑定（[`pyrig`](https://github.com/rgc-lang/pyrig)）。
+- 🧑‍💻 **完整工具链**——包管理器（[`rack`](https://github.com/rgc-lang/rack)）、语言服务器、VS Code 扩展、Python 绑定（[`pyrgc`](https://github.com/rgc-lang/pyrgc)）。
 
 ### 核心特性
 
@@ -50,7 +50,7 @@ RGC 的目标是：让 Python 开发者感到亲切，同时提供 LLVM 级别�
 - ⚡ LLVM 后端，支持 `-O0` / `-O2` 优化与 DWARF 调试信息。
 - 📦 模块系统（`import` + `public`）与 FFI（`extern def`）。
 - 📚 标准库：字符串、列表、JSON、正则、网络（TCP/UDP/HTTP/HTTPS）、async/await、TLS。
-- 🧩 Python 绑定：[pyrig](https://github.com/rgc-lang/pyrig)。
+- 🧩 Python 绑定：[pyrgc](https://github.com/rgc-lang/pyrgc)。
 - 📦 包管理：[rack](https://github.com/rgc-lang/rack)。
 
 ## 🚀 快速开始
@@ -98,12 +98,12 @@ RGC 自身编写；构建过程会验证最后两个阶段产出的 self-IR 完�
 
 - [语言设计规范](docs/compiler/DESIGN.md)
 - [标准库规范](docs/compiler/STDLIB.md)
-- [FFI 与 pyrig](docs/compiler/FFI.md)
+- [FFI 与 pyrgc](docs/compiler/FFI.md)
 
 ### 生态
 
 - [rack](https://github.com/rgc-lang/rack) —— 包管理器与构建系统
-- [pyrig](https://github.com/rgc-lang/pyrig) —— CPython 扩展绑定
+- [pyrgc](https://github.com/rgc-lang/pyrgc) —— CPython 扩展绑定
 - [analyzer](https://github.com/rgc-lang/analyzer) —— `rgc-analyzer` 语言服务器与 RGC VS Code 扩展
 
 ## 🤝 参与贡献

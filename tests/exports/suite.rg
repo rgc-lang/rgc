@@ -1,8 +1,8 @@
 # exports suite: `rgc --emit-exports` publishes the signature and str-ownership metadata that
-# binding generators consume (pyrig). The ownership class decides whether the generated C glue
+# binding generators consume (pyrgc). The ownership class decides whether the generated C glue
 # may free() a returned str buffer, so a wrong answer is memory corruption rather than a wrong
 # value — each classification is pinned against _fixture.rg here, whole JSON object per line so
-# the format pyrig parses is pinned too.
+# the format pyrgc parses is pinned too.
 #
 # Run by `rack test tests/exports`.
 
