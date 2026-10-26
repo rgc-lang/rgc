@@ -33,8 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BOOTSTRAP_TAG: v0.0.3
-  BOOTSTRAP_VERSION: 0.0.3
+  BOOTSTRAP_TAG: v0.0.4
+  BOOTSTRAP_VERSION: 0.0.4
   LLVM_VERSION: 23.1.4
 
 jobs:
