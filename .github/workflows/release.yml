@@ -33,8 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BOOTSTRAP_TAG: v0.0.1
-  BOOTSTRAP_VERSION: 0.0.1
+  BOOTSTRAP_TAG: v0.0.2
+  BOOTSTRAP_VERSION: 0.0.2
   LLVM_VERSION: 23.1.4
 
 jobs:
@@ -325,16 +325,31 @@ jobs:
           $wrapDir = Join-Path $env:RUNNER_TEMP "rgc-link"
           New-Item -ItemType Directory -Force -Path $wrapDir | Out-Null
           @'
-          $obj = $null; $out = $null; $libs = @()
+          $obj = $null; $out = $null; $libs = @(); $linkFlags = @()
           for ($i = 0; $i -lt $args.Count; $i++) {
             $a = $args[$i]
             if ($a -eq "-g" -or $a -eq "-lm" -or $a -eq "-lpthread" -or $a -eq "-fPIC") { continue }
             if ($a -eq "-o") { $i++; $out = $args[$i]; continue }
             if ($a -eq "-lws2_32") { $libs += "ws2_32.lib"; continue }
+            if ($a -eq "-lbcrypt") { $libs += "bcrypt.lib"; continue }
+            if ($a -eq "-shared") { $linkFlags += "/DLL"; continue }
             if ($null -eq $obj -and -not $a.StartsWith("-")) { $obj = $a; continue }
             $libs += $a
           }
-          & cl.exe /nologo /MT $obj /link ("/OUT:" + $out) @libs `
+          # The bootstrap compiler comes from the previous release and predates the Windows
+          # runtime shims, so its output still calls a few POSIX CRT names; alias them to the
+          # MSVC spellings (harmless when unused) so the seed can build the new compiler.
+          $linkFlags += @(
+            "/ALTERNATENAME:write=_write",
+            "/ALTERNATENAME:read=_read",
+            "/ALTERNATENAME:close=_close",
+            "/ALTERNATENAME:unlink=_unlink",
+            "/ALTERNATENAME:access=_access",
+            "/ALTERNATENAME:getcwd=_getcwd",
+            "/ALTERNATENAME:__errno_location=_errno"
+          )
+          & cl.exe /nologo /MT $obj /link ("/OUT:" + $out) @linkFlags @libs `
+            ws2_32.lib bcrypt.lib `
             libcmt.lib libucrt.lib libvcruntime.lib legacy_stdio_definitions.lib
           exit $LASTEXITCODE
           '@ | Set-Content -Path (Join-Path $wrapDir "link.ps1") -Encoding ascii

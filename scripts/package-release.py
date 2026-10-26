@@ -7,7 +7,18 @@ self-contained so each repository (rgc, rack) can own a copy.
 
 For the `rgc` component the archive contains the compiler binary plus the
 standard library source modules (`lib/`). For `rack` it contains just the
-package-manager binary.
+package-manager binary. Every platform uses `.tar.gz`, including Windows, so
+`rack self` can install with the RGC standard library alone (no zip support).
+
+For `rack` the packaging step also emits the raw bootstrap binary used by
+`install.sh` / `install.ps1` plus its `.sha256` checksum:
+
+  dist/rack-linux-x64.tar.gz
+  dist/rack-linux-x64
+  dist/rack-linux-x64.sha256
+  dist/rack-windows-x64.tar.gz
+  dist/rack-windows-x64.exe
+  dist/rack-windows-x64.exe.sha256
 
 Usage:
   python3 scripts/package-release.py \\
@@ -17,19 +28,18 @@ Usage:
       --lib-dir lib \\
       --out dist
 
-Produces, for example:
-  dist/rgc-linux-x64.tar.gz
-  dist/rack-linux-x64.tar.gz      # when --component rack
-
-Windows output uses `.zip` and `<component>.exe`; other platforms use
-`.tar.gz` with the binary named `<component>` at the archive root
-(the installers support both root-level and `bin/` layout).
+  python3 scripts/package-release.py \\
+      --component rack \\
+      --os linux --arch x64 \\
+      --bin target/bin/rack \\
+      --out dist
 """
 
 import argparse
+import hashlib
+import shutil
 import sys
 import tarfile
-import zipfile
 from pathlib import Path
 
 COMPONENTS = ("rgc", "rack")
@@ -47,7 +57,6 @@ def binary_arcname(component: str, os_name: str) -> str:
 
 def add_file_to_tar(tf: tarfile.TarFile, src: Path, arcname: str) -> None:
     info = tf.gettarinfo(str(src), arcname=arcname)
-    # Make the binary executable in the archive.
     if info.isfile():
         info.mode = 0o755
     with open(src, "rb") as f:
@@ -58,20 +67,33 @@ def write_tar_gz(path: Path, files: list[tuple[Path, str]]) -> None:
     with tarfile.open(path, "w:gz") as tf:
         for src, arc in files:
             if src.is_dir():
-                tf.add(str(src), arcname=arc, recursive=True, filter=lambda i: i)
+                tf.add(str(src), arcname=arc, recursive=True)
             else:
                 add_file_to_tar(tf, src, arc)
 
 
-def write_zip(path: Path, files: list[tuple[Path, str]]) -> None:
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for src, arc in files:
-            if src.is_dir():
-                for p in sorted(src.rglob("*")):
-                    if p.is_file():
-                        zf.write(str(p), f"{arc}/{p.relative_to(src)}")
-            else:
-                zf.write(str(src), arc)
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def write_bootstrap_binary(component: str, os_name: str, arch: str,
+                           bin_path: Path, out: Path) -> None:
+    raw_name = archive_stem(component, os_name, arch) + (
+        ".exe" if os_name == "windows" else ""
+    )
+    raw = out / raw_name
+    shutil.copyfile(bin_path, raw)
+    raw.chmod(0o755)
+    digest = sha256_of(raw)
+    (out / (raw_name + ".sha256")).write_text(
+        f"{digest}  {raw_name}\n", encoding="utf-8"
+    )
+    print(f"wrote {raw}")
+    print(f"wrote {out / (raw_name + '.sha256')}")
 
 
 def package(component: str, os_name: str, arch: str, bin_path: Path,
@@ -83,8 +105,7 @@ def package(component: str, os_name: str, arch: str, bin_path: Path,
 
     out.mkdir(parents=True, exist_ok=True)
     stem = archive_stem(component, os_name, arch)
-    ext = "zip" if os_name == "windows" else "tar.gz"
-    path = out / f"{stem}.{ext}"
+    path = out / f"{stem}.tar.gz"
 
     files = [(bin_path, binary_arcname(component, os_name))]
     if component == "rgc" and lib_dir is not None:
@@ -92,11 +113,11 @@ def package(component: str, os_name: str, arch: str, bin_path: Path,
             sys.exit(f"error: lib directory not found: {lib_dir}")
         files.append((lib_dir, "lib"))
 
-    if os_name == "windows":
-        write_zip(path, files)
-    else:
-        write_tar_gz(path, files)
+    write_tar_gz(path, files)
     print(f"wrote {path}")
+
+    if component == "rack":
+        write_bootstrap_binary(component, os_name, arch, bin_path, out)
     return path
 
 
@@ -107,7 +128,7 @@ def main() -> int:
     parser.add_argument("--arch", required=True, choices=ARCH_NAMES)
     parser.add_argument("--bin", required=True, type=Path, help="Path to the component binary")
     parser.add_argument("--lib-dir", type=Path, default=None,
-                       help="Path to the standard library directory (rgc only)")
+                        help="Path to the standard library directory (rgc only)")
     parser.add_argument("--out", type=Path, default=Path("dist"))
     args = parser.parse_args()
 

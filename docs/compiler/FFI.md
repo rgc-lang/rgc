@@ -50,10 +50,14 @@ def main() {
 | 标志 | 作用 |
 |------|------|
 | `--emit-object` | 只生成目标文件（`.o`），不链接（pyrig 构建流程使用） |
-| `--shared` | 链接为共享库（`g++ -shared -fPIC`），供 pyrig / 插件场景使用 |
+| `--shared` | 链接为共享库（Unix：`g++ -shared -fPIC`；Windows：`g++ -shared`，函数带 LLVM `dllexport`），供 pyrig / 插件场景使用 |
 | `--emit-exports <json>` | 额外写出入口文件全部顶层函数的签名与 `str` 返回值所有权分类（绑定生成器使用） |
 
 RGC 输出的目标文件是 PIC（位置无关），可直接参与共享库链接。
+
+Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`，COFF 目标的
+`.drectve` 段因此带上 `/EXPORT` 指令，由链接器写入 DLL 导出表；可执行文件则直接
+链接 `ws2_32`（Winsock）与 `bcrypt`（`BCryptGenRandom`，见 `entropy`）。
 
 `--emit-exports` 的 JSON 在语义检查通过后、IR 生成之前写出，因此它与
 `--emit-llvm` 可以同时使用，也不受后端崩溃影响：

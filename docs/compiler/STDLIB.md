@@ -70,9 +70,9 @@
 | **密码学** | SHA-256/384/512、HMAC、HKDF、AES-128/256-GCM、ChaCha20-Poly1305、X25519、P-256/P-384 ECDH/ECDSA、RSA PKCS#1 v1.5/PSS、大整数/Montgomery（`lib/sha2.rg` / `lib/hmac.rg` / `lib/hkdf.rg` / `lib/aes.rg` / `lib/chacha20poly1305.rg` / `lib/x25519.rg` / `lib/p256.rg` / `lib/rsa.rg` / `lib/bigint.rg`） | ✅（见 §6.17） |
 | **ASN.1/X.509** | DER TLV/OID、Base64/PEM、证书解析与链校验、系统 CA 包、公钥/签名（`lib/asn1.rg` / `lib/pkey.rg` / `lib/x509.rg`） | ✅（见 §6.18） |
 | 格式化 | `format(fmt, args...)`（`{}` 占位） | ✅ |
-| **异步** | `async def` / `await` / `asyncio.run` / `asyncio.gather` / `asyncio.wait_any` / `Task.done` / `Task.wait` / `Task.cancel`（一任务一线程）；`event` epoll 事件循环 | ✅（见 §10） |
+| **异步** | `async def` / `await` / `asyncio.run` / `asyncio.gather` / `asyncio.wait_any` / `Task.done` / `Task.wait` / `Task.cancel`（一任务一线程）；`event` poll 事件循环 | ✅（见 §10） |
 | **网络** | TCP / UDP / HTTP/1.1 / HTTP/2 / HTTPS / gzip（源码模块 `lib/net.rg` / `lib/udp.rg` / `lib/http.rg` / `lib/http2.rg` / `lib/https.rg` / `lib/tls.rg` / `lib/gzip.rg`） | ✅（见 §11） |
-| **异步网络** | `net_async`：epoll 就绪等待 + 非阻塞 TCP/UDP，支持 `await`、总超时与取消传播（`lib/net_async.rg`） | ✅（见 §11.8） |
+| **异步网络** | `net_async`：poll 就绪等待 + 非阻塞 TCP/UDP，支持 `await`、总超时与取消传播（`lib/net_async.rg`） | ✅（见 §11.8） |
 
 ---
 
@@ -365,6 +365,7 @@ def parse_double(s: str) -> Result[int, str] {
 | API | 签名 | 说明 | 状态 |
 |-----|------|------|------|
 | 单调时钟 | `time.now_monotonic() -> float` | `clock_gettime(CLOCK_MONOTONIC)`，秒，适合计时 | ✅ |
+| 单调毫秒 | `time.monotonic_ms() -> int` | `CLOCK_MONOTONIC` 毫秒；Windows 走 `QueryPerformanceCounter`，`event` 定时器使用 | ✅ |
 | 系统时间 | `time.now() -> int` | Unix 时间戳（秒），`time(NULL)` | ✅ |
 | 休眠 | `time.sleep(seconds: float)` | `nanosleep`；负数按 0 处理 | ✅ |
 
@@ -595,7 +596,7 @@ TLS 1.3 所需的密码学原语全部以 **纯 RGC** 实现（共享 `lib/bigin
 | `p256` | `base_public(@priv32)` / `shared_secret(...)` / `keypair()`；`ecdsa_sign_hash(@priv, @digest)` / `ecdsa_verify_hash(@pub, @digest, @der_sig)`；`ctx_new_p384()` + `ecdsa_verify_hash_ctx(...)`；`der_parse_sig` / `der_encode_sig` | NIST P-256/P-384 ECDH + ECDSA（SHA-256/SHA-384） |
 | `rsa` | `parse_public(@spki_der)` / `parse_private(@der)`；`pkcs1v15_verify` / `pkcs1v15_sign`；`pss_verify(..., salt_len)` / `pss_sign(..., salt_len)`；`hash_bytes(alg, @data)` | PKCS#1 v1.5 与 PSS；摘要 `sha256`/`sha384`/`sha512` |
 | `bigint` | `big_from_bytes_be/le`、`big_add` / `big_sub_mod` / `big_mul` / `big_mod`、`mont_new` + `mont_mul` / `mont_pow` / `mont_inv`、`big_to_bytes_be/le` | 定长多字大整数与 Montgomery 模运算 |
-| `entropy` | `bytes_random(n)` / `fill_bytes(@var b, n)` / `random_bytes_into(p, n)` | 读取 `/dev/urandom`；失败返回空 `Bytes` / `False`，调用方必须失败 |
+| `entropy` | `bytes_random(n)` / `fill_bytes(@var b, n)` / `random_bytes_into(p, n)` | Linux/macOS 读取 `/dev/urandom`，Windows 走 `BCryptGenRandom`；失败返回空 `Bytes` / `False`，调用方必须失败 |
 
 - 用例：`tests/stdlib/crypto/`，对照 RFC 4231（HMAC）、RFC 5869（HKDF）、FIPS-197（AES）、NIST SP 800-38D（GCM）、RFC 8439（ChaCha20-Poly1305）、RFC 7748（X25519）以及 openssl 生成的 ECDSA/RSA 签名向量。
 - TLS 1.3 套件：`TLS_AES_128_GCM_SHA256`、`TLS_AES_256_GCM_SHA384`、`TLS_CHACHA20_POLY1305_SHA256`（见 §11.5）。
@@ -962,9 +963,11 @@ async def cancels() {
 
 ### 10.5 事件循环（import event）
 
-> `lib/event.rg`：Linux epoll 单线程 selector，定时器用 `timerfd`（`CLOCK_MONOTONIC`），
-> 跨线程唤醒用 `socketpair`；全部通过 `extern def` 调用 libc，不依赖闭包或函数指针。
-> 事件循环与 `async def` 的线程模型相互独立：前者等待大量 fd 就绪，后者并行执行任务。
+> `lib/event.rg`：跨平台单线程 selector，基于 `poll(2)` / `WSAPoll`；定时器是
+> `time.monotonic_ms()` 截止时间加轮询超时，跨线程唤醒用回环 UDP socket 对；
+> 全部通过 `extern def` 调用 libc/Winsock，不依赖闭包或函数指针，也不需要
+> epoll/timerfd/socketpair 等 Linux 专有接口。事件循环与 `async def` 的线程模型
+> 相互独立：前者等待大量 fd 就绪，后者并行执行任务。
 
 ```python
 import event
@@ -998,20 +1001,20 @@ def main() {
 
 | API | 签名 | 说明 |
 |-----|------|------|
-| 创建 | `event.new_loop() -> EventLoop` | `epoll_create1` + 唤醒 socketpair；失败时 `is_open()` 为 `False`，`error` 为错误文本 |
-| 状态 | `EventLoop.is_open() -> bool` | `epfd >= 0` |
-| 注册 | `EventLoop.add(fd: int, token: int, events: int) -> EventOp` | 加入 epoll；`events` 为 `ev_in()` 等按位组合 |
-| 修改 | `EventLoop.modify(fd, token, events) -> EventOp` | 更新注册（`EPOLL_CTL_MOD`） |
-| 删除 | `EventLoop.remove(fd: int) -> EventOp` | `EPOLL_CTL_DEL`；未注册的 fd 返回错误 |
+| 创建 | `event.new_loop() -> EventLoop` | 创建回环 UDP 唤醒对；失败时 `is_open()` 为 `False`，`error` 为错误文本 |
+| 状态 | `EventLoop.is_open() -> bool` | 未关闭 |
+| 注册 | `EventLoop.add(fd: int, token: int, events: int) -> EventOp` | 加入 poll 集合；`events` 为 `ev_in()` 等按位组合 |
+| 修改 | `EventLoop.modify(fd, token, events) -> EventOp` | 更新注册；未注册的 fd 返回错误 |
+| 删除 | `EventLoop.remove(fd: int) -> EventOp` | 移除注册；未注册的 fd 返回错误 |
 | 等待 | `EventLoop.wait(timeout_ms: int) -> EventWait` | `< 0` 无限等待，`0` 立即返回，`> 0` 毫秒超时 |
-| 单次定时 | `EventLoop.add_timer(token: int, delay_ms: int) -> EventOp` | `timerfd` 单次；`delay_ms=0` 下一轮触发 |
+| 单次定时 | `EventLoop.add_timer(token: int, delay_ms: int) -> EventOp` | 到期后返回一次 `ev_timeout()`；`delay_ms=0` 下一轮触发 |
 | 周期定时 | `EventLoop.add_interval(token: int, interval_ms: int) -> EventOp` | 首次与后续间隔均为 `interval_ms` |
-| 取消定时 | `EventLoop.cancel_timer(token: int) -> bool` | 找到并关闭对应 timerfd |
+| 取消定时 | `EventLoop.cancel_timer(token: int) -> bool` | 移除对应定时器 |
 | 定时计数 | `EventLoop.timer_count() -> int` | 当前单次 + 周期定时器数量 |
 | 唤醒 | `EventLoop.post(token: int) -> bool` | 可跨线程调用；`wait` 返回 `ev_wake()` + token |
 | 唤醒 | `event.post_fd(wake_fd: int, token: int) -> bool` | 只持有 `wake_w` 时使用（如另一线程） |
-| 关闭 | `EventLoop.close()` | 关闭 epoll、唤醒 fd 与全部 timerfd；重复调用安全 |
-| 事件位 | `event.ev_in()` / `ev_out()` / `ev_err()` / `ev_hup()` / `ev_rdhup()` / `ev_edge()` | 与 epoll 位一致，可用 `\|` 组合 |
+| 关闭 | `EventLoop.close()` | 关闭唤醒对并清空全部注册与定时器；重复调用安全 |
+| 事件位 | `event.ev_in()` / `ev_out()` / `ev_err()` / `ev_hup()` / `ev_rdhup()` / `ev_edge()` | 可用 `\|` 组合；`ev_edge()` 仅为兼容保留 |
 | 事件位 | `event.ev_timeout()` / `event.ev_wake()` | 定时器 / `post` 事件（`256` / `512`） |
 
 结果类：
@@ -1030,21 +1033,28 @@ public class EventWait {
 行为约定：
 
 - **token**：`0 <= token < 2^62`，同一 loop 内应唯一（fd 与定时器共用命名空间）；
-  内核 `epoll_event.data` 只带 token，事件本身不带 fd，调用方用 token 找回状态。
-- **事件位**：`ev_in`/`ev_out` 为水平触发；需要边沿触发时加 `ev_edge()`，并自行把 fd
-  读到 `EAGAIN`/写到 `EAGAIN`。`ev_err`/`ev_hup` 总会报告。
-- **定时器**：每个定时器一个 `timerfd`（占用 fd）；`wait` 对到期定时器返回
-  `events = ev_timeout()`，周期定时器自动续期，单次定时器返回后自动关闭。
+  事件本身不带 fd，调用方用 token 找回状态。
+- **事件位**：`ev_in`/`ev_out` 为水平触发；`poll` 没有边沿触发模式，`ev_edge()` 会被接受
+  但不改变行为，注册始终是水平触发，需自行把 fd 读到 `EAGAIN`/写到 `EAGAIN`。
+  `ev_err`/`ev_hup` 总会报告；`ev_rdhup` 在 Linux 上映射 `POLLRDHUP`。
+- **定时器**：定时器只是 `time.monotonic_ms()` 截止时间，不占用 fd；`wait` 把下一个
+  截止时间并入 poll 超时，到期后返回 `events = ev_timeout()`。周期定时器按固定间隔续期，
+  错过的周期会追赶而不是堆积事件；单次定时器返回后自动移除。
   `add_timer` 重复使用同一 token 会替换旧定时器。
-- **唤醒**：`post` 把 8 字节 token 写入内部 socketpair，`wait` 读取后返回
-  `events = ev_wake()`；多次 `post` 各自得到一个事件。`post` 线程安全，其余控制操作
-  应在执行 `wait` 的线程调用。
+- **唤醒**：`post` 把 8 字节 token 写入回环 UDP socket 对，`wait` 读取后返回
+  `events = ev_wake()`；每个报文保留一条消息边界，多次 `post` 各自得到一个事件。
+  `post` 线程安全，其余控制操作应在执行 `wait` 的线程调用。
 - **错误**：注册/修改/删除失败返回 `ok=False` + `strerror(errno)`；`wait` 失败返回
   `ok=False`；关闭后调用返回 `event loop is closed`，不 panic。
-- **限额**：单次 `wait` 最多返回 64 个事件；fd 与定时器数量受进程 fd 上限约束。
+- **已关闭 fd**：未 `remove` 就被 `close` 的 fd 在下一次 poll 报告 `POLLNVAL` 时被静默移除，
+  与 epoll 关闭 fd 后自动注销的效果一致。
+- **限额**：单次 `wait` 返回的事件数等于就绪 fd 数加到期定时器数，不再有 64 事件上限；
+  fd 数量受进程 fd 上限约束，注册表查找为线性扫描。
+- **Windows**：`poll` 经运行时 shim 转成 `WSAPoll`（pollfd 与 `WSAPOLLFD` 布局差异在 shim
+  内转换），`ev_hup`/`ev_err` 分别对应 Winsock 的 `POLLHUP`/`POLLERR`；唤醒对仍是回环 UDP。
 - **非阻塞 IO**：配合 `net.connect_start` / `TcpStream.try_*` / `TcpListener.try_accept`
   与 `udp.UdpSocket.try_*`；它们用 `again=True` 表示 `EAGAIN`，与错误区分。
-- **单次就绪**：`event.wait_fd(fd, events, timeout_ms)` 提供一次性的 epoll 就绪等待
+- **单次就绪**：`event.wait_fd(fd, events, timeout_ms)` 提供一次性的 poll 就绪等待
   （返回 `1` 就绪 / `0` 超时 / `-1` 错误），不必构造 `EventLoop`；`net_async` 用它按
   50 ms 切片等待，从而在 `await` 中同时处理总超时与取消。
 - **当前边界**：`async def` 仍是一任务一线程；事件循环驱动的是 **fd 就绪**与超时，
@@ -1061,7 +1071,7 @@ public class EventWait {
   （粒度约 1ms，仅放弃等待、不终止任务）。任务创建即开始执行。
   `await` 在任务线程内以 1 ms 轮询子任务的完成标志，并轮询父任务取消标志：父任务被
   取消时会把取消转发给正在等待的子任务；顶层 `asyncio.run`（不在任务线程内）直接 join。
-  `net_async` 提供基于 `event.wait_fd`（epoll）的 TCP/UDP 就绪等待（§11.8）。
+  `net_async` 提供基于 `event.wait_fd`（poll）的 TCP/UDP 就绪等待（§11.8）。
 - 一任务一线程：任务数受系统线程数限制，`gather` 自身也占用一个线程。
 - `gather` 只接受变量形式的 `List[Task[T]]` 并消费它；借用列表、字面量列表与 `Task[None]` 是编译错误。
 - `asyncio.wait_any` 只接受 `List[Task[T]]`；空列表返回 `-1`，全部任务都未完成时会阻塞轮询
@@ -1092,9 +1102,9 @@ public class EventWait {
 | `Task.done` | ✅ | 原子查询完成标志，不阻塞 |
 | `Task.wait` | ✅ | 轮询完成标志，超时返回 `false`，不消费任务 |
 | `Task.cancel` / `asyncio.cancelled` | ✅ | 协作式取消：原子标志 + 任务内轮询，不强制终止 |
-| 事件循环（epoll） | ✅ | `lib/event.rg`：fd 注册/修改/删除、timerfd 定时器、跨线程唤醒、64 事件/轮 |
+| 事件循环（poll） | ✅ | `lib/event.rg`：fd 注册/修改/删除、单调时钟定时器、回环 UDP 跨线程唤醒 |
 | 非阻塞网络原语 | ✅ | `net` / `udp` 的 `set_nonblocking`、`try_*`、`connect_start`/`connect_finish`（§11.2/§11.3） |
-| 异步网络 | ✅ | `lib/net_async.rg`：epoll 就绪等待 + 非阻塞 TCP/UDP，总超时、协作式取消与嵌套 await 取消传播（§11.8）；仍为一任务一线程 |
+| 异步网络 | ✅ | `lib/net_async.rg`：poll 就绪等待 + 非阻塞 TCP/UDP，总超时、协作式取消与嵌套 await 取消传播（§11.8）；仍为一任务一线程 |
 
 > 任务数仍受线程数限制；高并发 IO 可用事件循环 + 非阻塞原语，不必一连接一线程。
 
@@ -1108,7 +1118,7 @@ public class EventWait {
 > 不链接 OpenSSL 或其他密码库）。
 > gzip/deflate 为纯 RGC 实现（`lib/gzip.rg`：DEFLATE、CRC-32/Adler-32），不依赖 zlib。
 > `http` 原生支持 `http://` 与 `https://`；HTTPS 通过 ALPN 协商 HTTP/2（选中 `h2` 时走
-> `http2`，否则回退 HTTP/1.1），`https` 保留为兼容层。非阻塞原语与 epoll 事件循环
+> `http2`，否则回退 HTTP/1.1），`https` 保留为兼容层。非阻塞原语与 poll 事件循环
 > 已落地（§10.5）；异步流式网络封装仍待后续（见 §11.7）。
 >
 > 语言限制：`Result[T, E]` 暂只支持标量与 `str` 载荷，因此连接/监听/接收结果用
@@ -1219,6 +1229,9 @@ def main() {
 - **非阻塞**：`connect_start` 返回 `pending=True` 时注册 `ev_out()`，可写后调用
   `connect_finish`；`try_recv`/`try_send`/`try_accept` 以 `again=True` 表示 `EAGAIN`，
   其余错误仍为 `ok=False`。非阻塞 connect 成功或 `connect_finish` 后套接字仍为非阻塞。
+- **Unix 域套接字**：`listen_unix`/`connect_unix` 在 Linux/macOS 支持文件系统路径与
+  `@name` 抽象命名空间；Windows 10+ 原生 AF_UNIX 只支持文件系统路径（`@name` 不可用）。
+  `listen_unix` 在 `EADDRINUSE` 时用 `lstat` 识别残留 socket 文件并清理后重绑。
 - **SIGPIPE**：发送使用 `MSG_NOSIGNAL`，对端提前关闭不会终止进程。
 - **内存**：接收字符串为堆分配且当前无 GC（与 `io`/`json` 一致），进程退出时由 OS 回收；
   二进制数据请使用 `Bytes`（`str` 的 `len()` 基于 `strlen`，遇到 NUL 会截断）。
@@ -1652,12 +1665,13 @@ public class H2MultiResult {
 | 压缩 | ✅ | `lib/gzip.rg`：纯 RGC DEFLATE（stored/fixed/dynamic Huffman、LZ77 fixed-Huffman 压缩、CRC-32/Adler-32、多 member gzip），`compress`/`decompress`/`decompress_limit`/`decompress_mem`/`is_gzip`/`is_zlib`；文件级 `compress_to_file`/`decompress_file`/`decompress_file_limit`（二进制安全，含 NUL 数据） |
 | 归档 | ✅ | `lib/tar.rg`：纯 RGC tar 读写，读 ustar / GNU LongLink / PAX（`path`/`linkpath`/`size`/`mtime`），写 ustar + 长名 GNU LongLink；`list_entries`/`extract`/`create`/`builder`；与 gzip 文件 API 组合处理 `.tar.gz`（§6.16） |
 | 异步 HTTP | ✅ | `get_async`/`post_async`/`request_async`（一任务一线程），支持 `asyncio.gather` |
-| 事件循环 | ✅ | `lib/event.rg`：epoll selector、timerfd 定时器、跨线程唤醒（§10.5） |
+| 事件循环 | ✅ | `lib/event.rg`：poll selector、单调时钟定时器、回环 UDP 跨线程唤醒（§10.5） |
 | 非阻塞 TCP/UDP | ✅ | `net`/`udp` 的 `set_nonblocking`、`try_*`、`connect_start`/`connect_finish` |
-| 异步 TCP/UDP | ✅ | `net_async`：epoll（`event.wait_fd`）+ 非阻塞 socket，`await` 友好，支持总超时/取消；线程模型仍为一任务一线程 |
+| 异步 TCP/UDP | ✅ | `net_async`：poll（`event.wait_fd`）+ 非阻塞 socket，`await` 友好，支持总超时/取消；线程模型仍为一任务一线程 |
 | HTTP/2 多路复用 | ✅ | `http2.get_many`：单连接并发 GET、按流分发、逐流限额/取消、遵守 `MAX_CONCURRENT_STREAMS`；请求体仍走单流 `request` |
 
-> 测试：`tests/stdlib/net/`（回环 echo、EOF、错误路径）、`tests/stdlib/http/`
+> 测试：`tests/stdlib/net/`（回环 echo、EOF、错误路径）、`tests/stdlib/net_unix/`
+> （Unix 域回环、残留 socket 文件清理、路径长度错误）、`tests/stdlib/http/`
 > （测试进程自举 `--serve` 子进程，覆盖 GET/POST/chunked/trailer/keep-alive/重定向/
 > Cookie/gzip/deflate/请求压缩/限额/超时/1xx/HEAD/204/二进制/查询编码/代理/异步 gather）、
 > `tests/stdlib/udp/`（回环收发、数据报边界、IPv6、二进制、非阻塞收发、超时、截断、错误路径）、
@@ -1678,7 +1692,7 @@ public class H2MultiResult {
 
 ### 11.8 异步网络（`import net_async`）
 
-`lib/net_async.rg` 在 `net`/`udp` 的非阻塞原语之上，用 `event.wait_fd`（epoll）
+`lib/net_async.rg` 在 `net`/`udp` 的非阻塞原语之上，用 `event.wait_fd`（poll）
 等待 fd 就绪，提供 `await` 友好的 TCP/UDP API。等待按 50 ms 切片，因此 `timeout_ms`
 是总超时，并在切片之间轮询 `asyncio.cancelled()`；`await` 会把父任务的取消转发给
 正在等待的子任务（§10.4）。任务仍是一任务一线程，事件循环只负责 fd 就绪。
@@ -1746,7 +1760,7 @@ async def client(port: int) -> str {
 | 正则 | `re` | `regex` crate | `regex`（✅ §6.14） |
 | 异步 | `asyncio` | `tokio` / `async-std` | `asyncio`（✅ 一任务一线程，`gather` / `wait_any` / `wait` / `cancel`，§10） |
 | 网络 | `socket` / `urllib` / `http.client` / `httpx` | `std::net` / `reqwest` / `hyper` | `net` / `udp` / `http` / `http2` / `https` / `tls` / `gzip`（✅ 同步 TCP/UDP/HTTP/1.1/HTTP/2、HTTP/2 多路复用 + 重定向/keep-alive/Cookie/代理，§11） |
-| 并发 | `threading` | `std::thread` | `async` 一任务一线程（✅ `gather` / `wait_any` / `Task.done` / `Task.wait` / `Task.cancel`，§10）+ `event` epoll 事件循环（✅ §10.5） |
+| 并发 | `threading` | `std::thread` | `async` 一任务一线程（✅ `gather` / `wait_any` / `Task.done` / `Task.wait` / `Task.cancel`，§10）+ `event` poll 事件循环（✅ §10.5） |
 
 ---
 
@@ -1789,7 +1803,7 @@ async def client(port: int) -> str {
 31. ✅ **异步 HTTP 封装**（`http.get_async`/`post_async`/`request_async`）— 一任务一线程包装阻塞客户端，可与 `asyncio.gather` 并发；事件驱动版本待事件循环封装
 32. ✅ **协议完整性收口** — HTTP chunked trailer 暴露（`HttpResponse.trailers` / `http.trailer`）、请求体 gzip 压缩（`HttpClient.compress_request`）、TLS 客户端证书（`tls.connect_mtls` / `connect_on_mtls`、`HttpClient.set_client_cert`）与 gzip 多 member/压缩
 33. ✅ **`http2` HTTP/2 客户端**（`http2.connect`/`attach`/`request`/`get_many` + HPACK/帧 API）— `lib/http2.rg`：TLS ALPN `h2`、SETTINGS/PING/WINDOW_UPDATE/GOAWAY/RST_STREAM、HEADERS/CONTINUATION/DATA、trailer、HPACK 静态/动态表与 Huffman 解码、连接与流双流控；`http`/`HttpClient` 默认自动协商（`http2` 字段可关闭）；`get_many` 单连接并发多路复用 GET
-34. ✅ **`event` 事件循环**（`new_loop`/`add`/`modify`/`remove`/`wait`/`add_timer`/`add_interval`/`post`）— `lib/event.rg`：epoll + timerfd + socketpair 唤醒；配套 `net`/`udp` 非阻塞原语（`connect_start`/`try_*`/`set_nonblocking`），不依赖闭包与函数指针
+34. ✅ **`event` 事件循环**（`new_loop`/`add`/`modify`/`remove`/`wait`/`add_timer`/`add_interval`/`post`）— `lib/event.rg`：poll + 单调时钟截止时间 + 回环 UDP 唤醒；配套 `net`/`udp` 非阻塞原语（`connect_start`/`try_*`/`set_nonblocking`），不依赖闭包与函数指针
 35. ✅ **`bytes` 源码模块**（`bytes_new`/`bytes_from_str`/`bytes_from_mem`/`bytes_concat`/`read_bytes`/`write_bytes` + `Bytes` 方法）— `lib/bytes.rg`：二进制缓冲区与二进制安全文件读写；`io.*` 为 C 字符串语义（遇 NUL 截断），压缩包/归档等必须走 `bytes`
 36. ✅ **gzip 文件 API**（`compress_to_file`/`decompress_file`/`decompress_file_limit`）— 在 `lib/gzip.rg` 内基于 `bytes.read_bytes`/`write_bytes` 封装，直接读写 `.gz` 文件
 37. ✅ **`tar` 源码模块**（`list_entries`/`extract`/`create`/`builder`/`create_from`）— `lib/tar.rg`：纯 RGC tar 读写，读 ustar/GNU LongLink/PAX，写 ustar + 长名 GNU LongLink，目录与二进制文件，配合 gzip 处理 `.tar.gz`
@@ -1798,7 +1812,7 @@ async def client(port: int) -> str {
 40. ✅ **`str` 扩展** — `find`/`rfind`/`trim`/`trim_start`/`trim_end`/`replace`/`repeat`/`lines`，按字节语义；用例见 `tests/stdlib/str_extra/`
 41. ✅ **`Map` 哈希化 + 扩展** — 开放寻址哈希表（线性探测、墓碑删除、0.75 负载因子、字符串 FNV-1a / 数值 splitmix64），新增 `remove`/`keys`/`values`；API 不变。编译器自身符号表同步受益：自编译 `--emit-llvm` 由约 2.37s 降至 1.64s（约 30%）；用例见 `tests/stdlib/map_extra/`
 42. ✅ **内建方法参数检查** — List/Map/str/Maybe/Result/Task 方法的实参个数与类型在编译期校验（如 `List[int].push("x")`、`str.repeat("x")`、`Map[str,int].put("a","b")` 均报错），负例见 `tests/stdlib/negative/`
-43. ✅ **异步网络接入事件循环** — `event.wait_fd` 单次 epoll 就绪等待 + `lib/net_async.rg`：非阻塞 TCP/UDP、总超时、协作式取消；`await` 在任务线程内轮询父任务取消并转发给正在等待的子任务。仍为一任务一线程（事件循环负责 fd 就绪，不是协程调度）；用例见 `tests/stdlib/net_async/`
+43. ✅ **异步网络接入事件循环** — `event.wait_fd` 单次 poll 就绪等待 + `lib/net_async.rg`：非阻塞 TCP/UDP、总超时、协作式取消；`await` 在任务线程内轮询父任务取消并转发给正在等待的子任务。仍为一任务一线程（事件循环负责 fd 就绪，不是协程调度）；用例见 `tests/stdlib/net_async/`
 
 > **测试位置**：上述 stage1 特性用例在 `tests/stdlib/`（由 `rack test` 运行并校验输出；`os.exit` 用例通过 `exit` 文件声明预期退出码）。
 > 这些用例刻意不放入 `examples/`，让 `examples/` 只保留最小可运行示例。
@@ -1814,10 +1828,10 @@ async def client(port: int) -> str {
 
 1. **FFI 基础**（用户态调用任意 C 库）— 生态包与系统库接入的前置（TLS 已改为纯 RGC，不再依赖它）
 2. ✅ **同步网络**（`TcpStream` / `TcpListener`，libc socket）— 已实现，见 §11
-3. ✅ **异步/协程**（`async def` / `await` / `asyncio.run` / `asyncio.gather` / `asyncio.wait_any` / `Task.done` / `Task.wait` / `Task.cancel`）— 已实现一任务一线程（见 §10）；取消为协作式（`asyncio.cancelled` 轮询）；epoll 事件循环由 `lib/event.rg` 独立提供（§10.5）
+3. ✅ **异步/协程**（`async def` / `await` / `asyncio.run` / `asyncio.gather` / `asyncio.wait_any` / `Task.done` / `Task.wait` / `Task.cancel`）— 已实现一任务一线程（见 §10）；取消为协作式（`asyncio.cancelled` 轮询）；poll 事件循环由 `lib/event.rg` 独立提供（§10.5）
 4. ✅ **UDP / TLS**（`lib/udp.rg`、`lib/tls.rg`/`lib/https.rg`）— UDP 走 `extern def` + libc；TLS 为纯 RGC TLS 1.3（无外部密码库），已落地，见 §11.3/§11.5
 5. ✅ **HTTP/2**（`lib/http2.rg`）— TLS ALPN + 帧层 + HPACK + 流控，`http` 默认协商；已落地，见 §11.6；`get_many` 提供并发多路复用（GET，不依赖事件循环）
-6. ✅ **事件循环**（`lib/event.rg`）— epoll + timerfd + socketpair 唤醒，配套 `net`/`udp` 非阻塞原语与 `event.wait_fd` 单次等待；`net_async` 把 `await` 与非阻塞 TCP/UDP 接到 epoll 就绪上（§11.8），仍为一任务一线程
+6. ✅ **事件循环**（`lib/event.rg`）— poll + 单调时钟截止时间 + 回环 UDP 唤醒，配套 `net`/`udp` 非阻塞原语与 `event.wait_fd` 单次等待；`net_async` 把 `await` 与非阻塞 TCP/UDP 接到 poll 就绪上（§11.8），仍为一任务一线程
 
 > `json` 与 `regex` 已作为 `lib/` 源码模块落地；`json` 的转义、代理对、控制字符校验与深度限制已完成，`regex` 的捕获组、反向引用、惰性量词与替换组引用已完成。`regex` 仍按字节匹配，Unicode 字符类、lookaround 与命名组暂不支持。
 
@@ -1838,7 +1852,7 @@ async def client(port: int) -> str {
 - [x] HTTPS/TLS 是否纳入标准库，还是靠 FFI 生态？— 已纳入：`lib/tls.rg` + `lib/https.rg` 以纯 RGC 实现 TLS 1.3（无外部密码库），证书/ASN.1 栈见 §6.17/§6.18
 - [x] `http` 与 `https` 是否合并？— 请求路径统一走 `http`（原生 `https://`），`https` 保留为兼容层，避免两套连接/重定向/压缩实现漂移
 - [x] 压缩依赖是否引入第三方库？— 不引入：`lib/gzip.rg` 为纯 RGC DEFLATE + CRC-32/Adler-32 实现，链接期不再追加 `-lz`；与系统 gzip/gunzip 的互操作由 `tests/gzip_interop/suite.rg`（`rack test`）校验
-- [x] 并发模型：线程（Rust 风格）还是协程（Python/Go 风格）？— `async` 用 pthread 一任务一线程；另提供 `lib/event.rg` epoll 事件循环（§10.5），协程调度暂不实现
+- [x] 并发模型：线程（Rust 风格）还是协程（Python/Go 风格）？— `async` 用 pthread 一任务一线程；另提供 `lib/event.rg` poll 事件循环（§10.5），协程调度暂不实现
 - [x] 格式化：采用 `format(fmt, args...)`（方案 2）；f-string 推迟到语法扩展阶段
 - [x] `format` 是否扩展格式说明符（宽度/精度/进制）与 `{{` / `}}` 转义？— 已实现宽度/精度/进制/对齐/补零与转义（§7）；位置参数与动态宽度暂不支持
 
