@@ -264,6 +264,9 @@ def loader_fail(l: @var ModuleLoader, path: str, src: str,
     it.msg = msg
     it.code = code
     it.file = path
+    it.help = ""
+    it.note = ""
+    it.subs = List[DiagSpan]()
     items = List[DiagItem]()
     items.push(it)
     l.err_items.push(items.get(0))

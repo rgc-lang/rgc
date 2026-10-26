@@ -113,6 +113,9 @@ public def fmt_source(src: str, errs: @var List[DiagItem]) -> str {
         it.msg = lx.err_msg
         it.code = lx.err_code
         it.file = ""
+        it.help = ""
+        it.note = ""
+        it.subs = List[DiagSpan]()
         errs.push(it)
         return src
     }

@@ -1,18 +1,36 @@
 # RGC compiler: diagnostic collection and rustc-style rendering
 #
-# Diagnostic rendering (v0.0.5 unified error codes):
+# Diagnostic rendering (v0.0.5 unified error codes, Rust-style detail):
 #   error[E0XXX]: <message>
 #      --> <source>:<line>:<col>
 #       |
 #     n | <source line>
-#       |    ^^^
+#       |    ^^^ <caret>
+#       |
+#     m | <secondary span line>
+#       |    --- <label>
+#       |
+#       = note: <note>
+#     help: <help>
 #
 # Every diagnostic carries a stable error code (see devdoc/RGC-0.0.5-ERRORCODES.md).
+# Diagnostics may also carry an optional `help` line, a `note` line, and
+# secondary spans (`subs`) that point at related locations (move origins,
+# conflicting borrows, declared definitions, etc.) like rustc.
 # Entries also carry a file attribute: empty = the entry file; otherwise it is a
 # module name (resolved by the loader before rendering) or a path directly.
 # Multi-file rendering is handled by diag_render_multi.
 
 import util
+
+# A secondary source span attached to a diagnostic (e.g. "value moved here").
+public class DiagSpan {
+    line: int
+    col: int
+    len: int
+    label: str
+    file: str
+}
 
 public class DiagItem {
     line: int
@@ -20,6 +38,9 @@ public class DiagItem {
     msg: str
     code: str
     file: str
+    help: str
+    note: str
+    subs: List[DiagSpan]
 }
 
 public def make_diag_items() -> List[DiagItem] {
@@ -33,7 +54,20 @@ public def diag_push(items: @var List[DiagItem], code: str, line: int, col: int,
     it.msg = msg
     it.code = code
     it.file = ""
+    it.help = ""
+    it.note = ""
+    it.subs = List[DiagSpan]()
     items.push(it)
+}
+
+public def make_diag_span(line: int, col: int, len: int, label: str) -> DiagSpan {
+    sp = DiagSpan()
+    sp.line = line
+    sp.col = col
+    sp.len = len
+    sp.label = label
+    sp.file = ""
+    return sp
 }
 
 public def diag_repeat(ch: str, n: int) -> str {
@@ -120,6 +154,8 @@ public def diag_caret_len(line: str, spaces: int) -> int {
 
 # Render a single diagnostic (including a trailing blank line). width is the line-number column width (aligned by the largest line number when rendering many).
 # When line < 1 there is no row/column to show; only the file is labeled.
+# Rust-style detail: primary span (^) plus secondary spans (-) with labels,
+# followed by an optional `= note:` line and a `help:` line.
 public def diag_render_one(source_name: str, source: str, it: @DiagItem,
                            width: int) -> str {
     lines = diag_lines(source)
@@ -134,24 +170,124 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
     } else {
         out = "error: " + it.msg + "\n"
     }
-    if it.line >= 1 {
-        out = out + diag_repeat(" ", width) + "--> " + source_name + ":" +
-              to_string(it.line) + ":" + to_string(it.col) + "\n"
-        if it.line <= lines.len() {
-            out = out + diag_repeat(" ", width + 1) + "|\n"
-            line_num = to_string(it.line)
+    if it.line < 1 {
+        out = out + diag_repeat(" ", width) + "--> " + source_name + "\n"
+        return out + "\n"
+    }
+    out = out + diag_repeat(" ", width) + "--> " + source_name + ":" +
+          to_string(it.line) + ":" + to_string(it.col) + "\n"
+    out = out + diag_repeat(" ", width + 1) + "|\n"
+
+    # Collect spans: primary + secondary, with resolved source text.
+    sp_lines = List[int]()
+    sp_cols = List[int]()
+    sp_lens = List[int]()
+    sp_labels = List[str]()
+    sp_srcs = List[str]()
+    sp_prim = List[int]()
+
+    sp_lines.push(it.line)
+    sp_cols.push(it.col)
+    sp_lens.push(1)          # primary caret length is recomputed from the token
+    sp_labels.push("")
+    sp_srcs.push(source)
+    sp_prim.push(1)
+
+    i = 0
+    while i < it.subs.len() {
+        sp = it.subs.get(i)
+        ssrc = source
+        if sp.file.len() > 0 and not str_eq(sp.file, source_name) {
+            r = read_file(sp.file)
+            if r.is_ok() {
+                ssrc = r.unwrap()
+            }
+        }
+        sp_lines.push(sp.line)
+        sp_cols.push(sp.col)
+        sp_lens.push(sp.len)
+        sp_labels.push(sp.label)
+        sp_srcs.push(ssrc)
+        sp_prim.push(0)
+        i = i + 1
+    }
+
+    # Stable insertion sort by line (small n; rustc renders spans in source order).
+    # Note: each parallel list needs its own typed temporary (RGC variables are
+    # statically typed on first assignment; reusing one `t` for int and str
+    # breaks IR generation).
+    n = sp_lines.len()
+    a = 1
+    while a < n {
+        b = a
+        while b > 0 and sp_lines.get(b) < sp_lines.get(b - 1) {
+            ti = sp_lines.get(b)
+            sp_lines.set(b, sp_lines.get(b - 1))
+            sp_lines.set(b - 1, ti)
+            ti = sp_cols.get(b)
+            sp_cols.set(b, sp_cols.get(b - 1))
+            sp_cols.set(b - 1, ti)
+            ti = sp_lens.get(b)
+            sp_lens.set(b, sp_lens.get(b - 1))
+            sp_lens.set(b - 1, ti)
+            ts = sp_labels.get(b)
+            sp_labels.set(b, sp_labels.get(b - 1))
+            sp_labels.set(b - 1, ts)
+            ts = sp_srcs.get(b)
+            sp_srcs.set(b, sp_srcs.get(b - 1))
+            sp_srcs.set(b - 1, ts)
+            ti = sp_prim.get(b)
+            sp_prim.set(b, sp_prim.get(b - 1))
+            sp_prim.set(b - 1, ti)
+            b = b - 1
+        }
+        a = a + 1
+    }
+
+    prev_line = -1
+    k = 0
+    while k < n {
+        ln = sp_lines.get(k)
+        slines = diag_lines(sp_srcs.get(k))
+        if ln >= 1 and ln <= slines.len() {
+            if prev_line >= 0 and ln > prev_line + 1 {
+                out = out + diag_repeat(" ", width + 1) + "|\n"
+            }
+            line_num = to_string(ln)
             out = out + diag_repeat(" ", width - line_num.len()) + line_num + " | " +
-                  lines.get(it.line - 1) + "\n"
+                  slines.get(ln - 1) + "\n"
             out = out + diag_repeat(" ", width + 1) + "| "
-            spaces = it.col - 1
+            spaces = sp_cols.get(k) - 1
             if spaces < 0 {
                 spaces = 0
             }
             out = out + diag_repeat(" ", spaces)
-            out = out + diag_repeat("^", diag_caret_len(lines.get(it.line - 1), spaces)) + "\n"
+            if sp_prim.get(k) == 1 {
+                clen = diag_caret_len(slines.get(ln - 1), spaces)
+                out = out + diag_repeat("^", clen)
+            } else {
+                l2 = sp_lens.get(k)
+                if l2 < 1 {
+                    l2 = 1
+                }
+                out = out + diag_repeat("-", l2)
+            }
+            if sp_labels.get(k).len() > 0 {
+                out = out + " " + sp_labels.get(k)
+            }
+            out = out + "\n"
+            prev_line = ln
         }
-    } else {
-        out = out + diag_repeat(" ", width) + "--> " + source_name + "\n"
+        k = k + 1
+    }
+
+    # Note and help lines (rustc style).
+    if it.note.len() > 0 {
+        out = out + diag_repeat(" ", width + 1) + "|\n"
+        out = out + "= note: " + it.note + "\n"
+    }
+    if it.help.len() > 0 {
+        out = out + "help: " + it.help + "\n"
     }
     return out + "\n"
 }
@@ -236,6 +372,38 @@ public def diag_render_multi(entry_name: str, entry_src: str,
                     srcs.push(src)
                 }
             }
+        }
+        # Resolve secondary-span file attributes the same way (module name -> path),
+        # so diag_render_one can read them from disk when they differ from the parent.
+        si = 0
+        while si < it.subs.len() {
+            sp = it.subs.get(si)
+            if sp.file.len() > 0 and not str_eq(sp.file, entry_name) and
+               not str_eq(sp.file, name) {
+                k = 0
+                sfound = False
+                while k < paths.len() {
+                    if str_eq(paths.get(k), sp.file) {
+                        sp.file = paths.get(k)
+                        sfound = True
+                    }
+                    k = k + 1
+                }
+                if not sfound {
+                    r2 = read_file(sp.file)
+                    if r2.is_ok() {
+                        sp.file = sp.file
+                        paths.push(sp.file)
+                        srcs.push(r2.unwrap())
+                        sfound = True
+                    }
+                }
+                if not sfound {
+                    sp.file = name
+                }
+            }
+            it.subs.set(si, sp)
+            si = si + 1
         }
         out = out + diag_render_one(name, src, @it, width)
         i = i + 1

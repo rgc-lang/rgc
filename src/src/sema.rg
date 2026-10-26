@@ -408,8 +408,14 @@ public class Sema {
     cur_fn_async: int                   # whether the current function is async def
     loop_depth: int
     cur_moved: Map[str, int]            # whether a variable has been moved
+    cur_moved_line: Map[str, int]      # variable -> source line of the move (for "value moved here")
+    cur_moved_col: Map[str, int]         # variable -> source col of the move (for "value moved here")
     cur_borrow_shared: Map[str, int]    # shared borrow count
     cur_borrow_mut: Map[str, int]       # mutable borrow count
+    borrow_shared_line: Map[str, int]   # line of the latest active shared borrow (for "borrow occurs here")
+    borrow_shared_col: Map[str, int]      # col of the latest active shared borrow
+    borrow_mut_line: Map[str, int]        # line of the latest active mutable borrow
+    borrow_mut_col: Map[str, int]           # col of the latest active mutable borrow
     cur_borrow_target: Map[str, str]    # borrow handle -> target variable
     cur_handle_mut: Map[str, int]       # whether the handle is a mutable borrow
     cur_var_names: List[str]            # declared variable names (for state snapshots)
@@ -485,8 +491,14 @@ public def make_sema() -> Sema {
     s.cur_fn_async = 0
     s.loop_depth = 0
     s.cur_moved = Map[str, int]()
+    s.cur_moved_line = Map[str, int]()
+    s.cur_moved_col = Map[str, int]()
     s.cur_borrow_shared = Map[str, int]()
     s.cur_borrow_mut = Map[str, int]()
+    s.borrow_shared_line = Map[str, int]()
+    s.borrow_shared_col = Map[str, int]()
+    s.borrow_mut_line = Map[str, int]()
+    s.borrow_mut_col = Map[str, int]()
     s.cur_borrow_target = Map[str, str]()
     s.cur_handle_mut = Map[str, int]()
     s.cur_var_names = List[str]()
@@ -614,15 +626,138 @@ def sema_error_code_for_msg(msg: str) -> str {
     return "E0000"
 }
 
-public def sema_error(s: @var Sema, line: int, col: int, msg: str) {
+# Build and push a diagnostic item with all rustc-style fields.
+def sema_error_full(s: @var Sema, line: int, col: int, code: str, msg: str,
+                    help: str, note: str, subs: List[DiagSpan]) {
     it = DiagItem()
     it.line = line
     it.col = col
     it.msg = msg
-    it.code = sema_error_code_for_msg(msg)
+    it.code = code
     it.file = s.current_module
+    it.help = help
+    it.note = note
+    it.subs = subs
     s.diag_items.push(it)
     s.diag_errors = s.diag_errors + 1
+}
+
+public def sema_error(s: @var Sema, line: int, col: int, msg: str) {
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, "", "",
+                    List[DiagSpan]())
+}
+
+public def sema_error_help(s: @var Sema, line: int, col: int, msg: str, help: str) {
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, help, "",
+                    List[DiagSpan]())
+}
+
+public def sema_error_note(s: @var Sema, line: int, col: int, msg: str, note: str) {
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, "", note,
+                    List[DiagSpan]())
+}
+
+# Error with one secondary span (e.g. "value moved here").
+public def sema_error_sub(s: @var Sema, line: int, col: int, msg: str,
+                          sub_line: int, sub_col: int, sub_len: int,
+                          sub_label: str) {
+    subs = List[DiagSpan]()
+    subs.push(make_diag_span(sub_line, sub_col, sub_len, sub_label))
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, "", "", subs)
+}
+
+# Error with a list of secondary spans.
+public def sema_error_subs(s: @var Sema, line: int, col: int, msg: str,
+                           subs: List[DiagSpan]) {
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, "", "", subs)
+}
+
+# ---------- rustc-style "did you mean" hints ----------
+
+# Levenshtein edit distance between two byte strings (for similar-name hints).
+def sema_edit_distance(a: str, b: str) -> int {
+    n = a.len()
+    m = b.len()
+    prev = List[int]()
+    i = 0
+    while i <= m {
+        prev.push(i)
+        i = i + 1
+    }
+    i = 1
+    while i <= n {
+        cur = List[int]()
+        cur.push(i)
+        j = 1
+        while j <= m {
+            cost = 0
+            if a.char_at(i - 1) != b.char_at(j - 1) {
+                cost = 1
+            }
+            best = prev.get(j) + 1
+            ins = cur.get(j - 1) + 1
+            if ins < best {
+                best = ins
+            }
+            sub = prev.get(j - 1) + cost
+            if sub < best {
+                best = sub
+            }
+            cur.push(best)
+            j = j + 1
+        }
+        prev = cur
+        i = i + 1
+    }
+    return prev.get(m)
+}
+
+# Best candidate within a small edit distance; "" when nothing is close enough.
+def sema_best_match(name: str, candidates: List[str]) -> str {
+    best = ""
+    best_d = 999
+    i = 0
+    while i < candidates.len() {
+        c = candidates.get(i)
+        if not str_eq(c, name) {
+            d = sema_edit_distance(name, c)
+            if d < best_d {
+                best_d = d
+                best = c
+            }
+        }
+        i = i + 1
+    }
+    # Suggest only when the edit distance is small relative to the name lengths.
+    if best_d <= 3 and best_d * 2 < name.len() + best.len() {
+        return best
+    }
+    return ""
+}
+
+# "a <kind> with a similar name exists: `best`" / "" when no close match.
+def sema_hint_similar(kind: str, name: str, candidates: List[str]) -> str {
+    best = sema_best_match(name, candidates)
+    if best.len() > 0 {
+        return "a " + kind + " with a similar name exists: `" + best + "`"
+    }
+    return ""
+}
+
+# All user-defined function names (top-level + generic templates), for hints.
+def sema_known_fn_names(s: @var Sema) -> List[str] {
+    names = List[str]()
+    i = 0
+    while i < s.fn_order.len() {
+        names.push(s.fn_order.get(i))
+        i = i + 1
+    }
+    i = 0
+    while i < s.generic_fn_names.len() {
+        names.push(s.generic_fn_names.get(i))
+        i = i + 1
+    }
+    return names
 }
 
 # Register built-in standard-library functions (compiler builtins, no source).
@@ -664,15 +799,23 @@ public def sema_reset_var_state(s: @var Sema) {
     s.cur_var_names = List[str]()
     s.cur_var_seen = Map[str, int]()
     s.cur_moved = Map[str, int]()
+    s.cur_moved_line = Map[str, int]()
+    s.cur_moved_col = Map[str, int]()
     s.cur_borrow_shared = Map[str, int]()
     s.cur_borrow_mut = Map[str, int]()
+    s.borrow_shared_line = Map[str, int]()
+    s.borrow_shared_col = Map[str, int]()
+    s.borrow_mut_line = Map[str, int]()
+    s.borrow_mut_col = Map[str, int]()
     s.cur_borrow_target = Map[str, str]()
     s.cur_handle_mut = Map[str, int]()
     s.loop_depth = 0
 }
 
-public def sema_mark_moved(s: @var Sema, name: str) {
+public def sema_mark_moved(s: @var Sema, name: str, line: int, col: int) {
     s.cur_moved.put(name, 1)
+    s.cur_moved_line.put(name, line)
+    s.cur_moved_col.put(name, col)
 }
 
 public def sema_is_moved(s: @var Sema, name: str) -> bool {
@@ -696,12 +839,30 @@ public def sema_mut_count(s: @var Sema, name: str) -> int {
 # Check moved / mutable-borrow state before reading a variable.
 public def sema_check_use(s: @var Sema, name: str, line: int, col: int) {
     if sema_is_moved(s, name) {
-        sema_error(s, line, col, "use of moved value: `" + name + "`")
+        # rustc-style: point back at where the value was moved from.
+        if s.cur_moved_line.contains(name) {
+            sema_error_sub(s, line, col, "use of moved value: `" + name + "`",
+                           s.cur_moved_line.get(name), s.cur_moved_col.get(name),
+                           name.len(), "value moved here")
+        } else {
+            sema_error(s, line, col, "use of moved value: `" + name + "`")
+        }
         return
     }
     if sema_mut_count(s, name) > 0 {
-        sema_error(s, line, col, "cannot access `" + name + "` because it is borrowed as @var")
-        sema_error(s, line, col, "cannot use `" + name + "` because it is borrowed as @var")
+        if s.borrow_mut_line.contains(name) {
+            sema_error_sub(s, line, col,
+                           "cannot access `" + name + "` because it is borrowed as @var",
+                           s.borrow_mut_line.get(name), s.borrow_mut_col.get(name),
+                           name.len(), "borrow occurs here")
+            sema_error_sub(s, line, col,
+                           "cannot use `" + name + "` because it is borrowed as @var",
+                           s.borrow_mut_line.get(name), s.borrow_mut_col.get(name),
+                           name.len(), "borrow occurs here")
+        } else {
+            sema_error(s, line, col, "cannot access `" + name + "` because it is borrowed as @var")
+            sema_error(s, line, col, "cannot use `" + name + "` because it is borrowed as @var")
+        }
     }
 }
 
@@ -1558,8 +1719,18 @@ public def sema_check_interfaces(s: @var Sema, c: Stmt) {
 public def sema_check_enum_variant_args(s: @var Sema, e: @Expr, enum_name: str) {
     v_idx = sema_match_variant_idx(s, enum_name, e.name)
     if v_idx < 0 {
-        sema_error(s, e.line, e.col, "unknown variant `" + e.name +
-                   "` of enum `" + enum_name + "`")
+        variants = List[str]()
+        if s.enum_variants.contains(enum_name) {
+            variants = s.enum_variants.get(enum_name).split(",")
+        }
+        hint = sema_hint_similar("variant", e.name, variants)
+        if hint.len() > 0 {
+            sema_error_help(s, e.line, e.col, "unknown variant `" + e.name +
+                           "` of enum `" + enum_name + "`", hint)
+        } else {
+            sema_error(s, e.line, e.col, "unknown variant `" + e.name +
+                       "` of enum `" + enum_name + "`")
+        }
         return
     }
     if not s.enum_field_kinds.contains(enum_name) {
@@ -2660,12 +2831,14 @@ public def sema_check_stmt(s: @var Sema, st: Stmt) {
         pass
     } elif st.kind == StmtBreak() {
         if s.loop_depth == 0 {
-            sema_error(s, st.line, st.col, "`break` outside of a loop")
+            sema_error_help(s, st.line, st.col, "`break` outside of a loop",
+                            "`break` can only be used inside a `for` or `while` loop")
         }
         pass
     } elif st.kind == StmtContinue() {
         if s.loop_depth == 0 {
-            sema_error(s, st.line, st.col, "`continue` outside of a loop")
+            sema_error_help(s, st.line, st.col, "`continue` outside of a loop",
+                            "`continue` can only be used inside a `for` or `while` loop")
         }
         pass
     } elif st.kind == StmtFnDef() or st.kind == StmtClassDef() or
@@ -2755,31 +2928,69 @@ public def sema_check_borrow(s: @var Sema, e: @Expr) -> str {
     }
     name = op.name
     if not s.cur_locals.contains(name) {
-        sema_error(s, op.line, op.col, "use of undeclared variable `" + name + "`")
+        hint = sema_hint_similar("variable", name, s.cur_var_names)
+        if hint.len() > 0 {
+            sema_error_help(s, op.line, op.col, "use of undeclared variable `" + name + "`",
+                            hint)
+        } else {
+            sema_error(s, op.line, op.col, "use of undeclared variable `" + name + "`")
+        }
         return "error"
     }
     if sema_is_moved(s, name) {
-        sema_error(s, op.line, op.col, "use of moved value: `" + name + "`")
+        if s.cur_moved_line.contains(name) {
+            sema_error_sub(s, op.line, op.col, "use of moved value: `" + name + "`",
+                           s.cur_moved_line.get(name), s.cur_moved_col.get(name),
+                           name.len(), "value moved here")
+        } else {
+            sema_error(s, op.line, op.col, "use of moved value: `" + name + "`")
+        }
         return "error"
     }
     sc = sema_shared_count(s, name)
     mc = sema_mut_count(s, name)
     if e.is_mut {
         if sc > 0 {
-            sema_error(s, e.line, e.col,
-                       "cannot borrow `" + name + "` as @var because it is also borrowed as @")
+            # Show where the conflicting immutable borrow was created (rustc-style).
+            if s.borrow_shared_line.contains(name) {
+                sema_error_sub(s, e.line, e.col,
+                               "cannot borrow `" + name + "` as @var because it is also borrowed as @",
+                               s.borrow_shared_line.get(name), s.borrow_shared_col.get(name),
+                               name.len(), "immutable borrow occurs here")
+            } else {
+                sema_error(s, e.line, e.col,
+                           "cannot borrow `" + name + "` as @var because it is also borrowed as @")
+            }
         } elif mc > 0 {
-            sema_error(s, e.line, e.col,
-                       "cannot borrow `" + name + "` as @var because it is also borrowed as @var")
+            if s.borrow_mut_line.contains(name) {
+                sema_error_sub(s, e.line, e.col,
+                               "cannot borrow `" + name + "` as @var because it is also borrowed as @var",
+                               s.borrow_mut_line.get(name), s.borrow_mut_col.get(name),
+                               name.len(), "mutable borrow occurs here")
+            } else {
+                sema_error(s, e.line, e.col,
+                           "cannot borrow `" + name + "` as @var because it is also borrowed as @var")
+            }
         } else {
             s.cur_borrow_mut.put(name, mc + 1)
+            s.borrow_mut_line.put(name, e.line)
+            s.borrow_mut_col.put(name, e.col)
         }
     } else {
         if mc > 0 {
-            sema_error(s, e.line, e.col,
-                       "cannot borrow `" + name + "` as @ because it is also borrowed as @var")
+            if s.borrow_mut_line.contains(name) {
+                sema_error_sub(s, e.line, e.col,
+                               "cannot borrow `" + name + "` as @ because it is also borrowed as @var",
+                               s.borrow_mut_line.get(name), s.borrow_mut_col.get(name),
+                               name.len(), "mutable borrow occurs here")
+            } else {
+                sema_error(s, e.line, e.col,
+                           "cannot borrow `" + name + "` as @ because it is also borrowed as @var")
+            }
         } else {
             s.cur_borrow_shared.put(name, sc + 1)
+            s.borrow_shared_line.put(name, e.line)
+            s.borrow_shared_col.put(name, e.col)
         }
     }
     return s.cur_locals.get(name)
@@ -2898,7 +3109,7 @@ public def sema_check_call_args(s: @var Sema, e: @Expr, label: str, fname: str,
                 sema_error(s, arg.line, arg.col, "cannot move out of `" + arg.name +
                            "` because it is borrowed")
             } else {
-                sema_mark_moved(s, arg.name)
+                sema_mark_moved(s, arg.name, arg.line, arg.col)
             }
         }
         j = j + 1
@@ -2916,7 +3127,7 @@ public def sema_consume_task(s: @var Sema, op: Expr) {
             sema_error(s, op.line, op.col, "cannot await `" + op.name +
                        "` because it is borrowed")
         }
-        sema_mark_moved(s, op.name)
+        sema_mark_moved(s, op.name, op.line, op.col)
     }
 }
 
@@ -2990,7 +3201,7 @@ public def sema_consume_gather_list(s: @var Sema, op: Expr) {
             sema_error(s, op.line, op.col, "cannot gather `" + op.name +
                        "` because it is borrowed")
         }
-        sema_mark_moved(s, op.name)
+        sema_mark_moved(s, op.name, op.line, op.col)
     }
 }
 
@@ -3074,7 +3285,13 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
     }
     if e.kind == ExprVar() {
         if not s.cur_locals.contains(e.name) {
-            sema_error(s, e.line, e.col, "use of undeclared variable `" + e.name + "`")
+            hint = sema_hint_similar("variable", e.name, s.cur_var_names)
+            if hint.len() > 0 {
+                sema_error_help(s, e.line, e.col, "use of undeclared variable `" + e.name + "`",
+                                hint)
+            } else {
+                sema_error(s, e.line, e.col, "use of undeclared variable `" + e.name + "`")
+            }
             return "error"
         }
         sema_check_use(s, e.name, e.line, e.col)
@@ -3155,7 +3372,13 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                 }
                 inst = sema_instantiate_class(s, ctor_tkey, encs, e.line, e.col)
                 if inst.len() == 0 {
-                    sema_error(s, e.line, e.col, "call to unknown function `" + e.name + "`")
+                    hint = sema_hint_similar("function", e.name, sema_known_fn_names(s))
+                    if hint.len() > 0 {
+                        sema_error_help(s, e.line, e.col,
+                                        "call to unknown function `" + e.name + "`", hint)
+                    } else {
+                        sema_error(s, e.line, e.col, "call to unknown function `" + e.name + "`")
+                    }
                     return "error"
                 }
                 s.last_generic_custom = inst
@@ -3436,7 +3659,12 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                 return "error"
             }
         }
-        sema_error(s, e.line, e.col, "call to unknown function `" + e.name + "`")
+        hint = sema_hint_similar("function", e.name, sema_known_fn_names(s))
+        if hint.len() > 0 {
+            sema_error_help(s, e.line, e.col, "call to unknown function `" + e.name + "`", hint)
+        } else {
+            sema_error(s, e.line, e.col, "call to unknown function `" + e.name + "`")
+        }
         return "error"
     }
     if e.kind == ExprIf() {
@@ -3490,8 +3718,16 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
             if nobj.kind == ExprVar() and s.cur_borrow_target.contains(nobj.name) and
                s.cur_borrow_target.get(nobj.name).len() > 0 and
                s.cur_handle_mut.get(nobj.name) == 0 {
-                sema_error(s, nobj.line, nobj.col,
-                           "cannot assign through shared borrow `" + nobj.name + "`")
+                if s.borrow_shared_line.contains(nobj.name) {
+                    sema_error_sub(s, nobj.line, nobj.col,
+                                   "cannot assign through shared borrow `" + nobj.name + "`",
+                                   s.borrow_shared_line.get(nobj.name),
+                                   s.borrow_shared_col.get(nobj.name),
+                                   nobj.name.len(), "borrow occurs here")
+                } else {
+                    sema_error(s, nobj.line, nobj.col,
+                               "cannot assign through shared borrow `" + nobj.name + "`")
+                }
             } else {
                 sema_check_expr(s, tg.object.get(0))
             }
@@ -3542,7 +3778,7 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                 sema_error(s, ve.line, ve.col, "cannot move out of `" + ve.name +
                            "` because it is borrowed")
             } elif not (s.cur_borrow_target.get(ve.name).len() > 0) {
-                sema_mark_moved(s, ve.name)
+                sema_mark_moved(s, ve.name, ve.line, ve.col)
             }
         }
         return dk
@@ -3577,8 +3813,15 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
             i = i + 1
         }
         if not found {
-            sema_error(s, e.object.get(0).line, e.object.get(0).col,
-                       "unknown field `" + e.name + "` in class `" + obj_custom + "`")
+            hint = sema_hint_similar("field", e.name, names)
+            if hint.len() > 0 {
+                sema_error_help(s, e.object.get(0).line, e.object.get(0).col,
+                               "unknown field `" + e.name + "` in class `" + obj_custom + "`",
+                               hint)
+            } else {
+                sema_error(s, e.object.get(0).line, e.object.get(0).col,
+                           "unknown field `" + e.name + "` in class `" + obj_custom + "`")
+            }
             return "error"
         }
         return sema_member_kind(s, e.object.get(0), e.name)
@@ -3602,8 +3845,18 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                     v_idx = sema_match_variant_idx(s, subject_custom, p.name)
                 }
                 if v_idx < 0 {
-                    sema_error(s, e.line, e.col, "unknown variant `" + p.name +
-                               "` of enum `" + subject_custom + "`")
+                    variants = List[str]()
+                    if s.enum_variants.contains(subject_custom) {
+                        variants = s.enum_variants.get(subject_custom).split(",")
+                    }
+                    hint = sema_hint_similar("variant", p.name, variants)
+                    if hint.len() > 0 {
+                        sema_error_help(s, e.line, e.col, "unknown variant `" + p.name +
+                                       "` of enum `" + subject_custom + "`", hint)
+                    } else {
+                        sema_error(s, e.line, e.col, "unknown variant `" + p.name +
+                                   "` of enum `" + subject_custom + "`")
+                    }
                 } else {
                     sema_bind_pattern(s, p, subject_custom, v_idx,
                                       subject_kind, subject_custom, e.line, e.col)
