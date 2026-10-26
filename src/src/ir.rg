@@ -3083,6 +3083,12 @@ public def irg_codegen_call(g: @var IRGen, e: Expr) -> str {
         wrr = irg_new_reg(g)
         irg_add(g, wrr + " = call i64 @" + irg_extern_name("write") + "(i32 2, ptr " + data + ", i64 " + slen + ")")
         return "0"
+    } elif e.name == "stderr_is_tty" {
+        rc = irg_new_reg(g)
+        irg_add(g, rc + " = call i32 @" + irg_extern_name("isatty") + "(i32 2)")
+        r = irg_new_reg(g)
+        irg_add(g, r + " = icmp ne i32 " + rc + ", 0")
+        return r
     } elif e.name == "List" and e.type_args.len() == 1 {
         inst = irg_te_mangled(g, e.type_args.get(0))
         full = "List$" + inst
@@ -8740,6 +8746,7 @@ public def irg_emit_externs(g: @var IRGen) {
     irg_extern(g, "i32 @remove(ptr)")
     irg_extern(g, "i32 @access(ptr, i32)")
     irg_extern(g, "i64 @write(i32, ptr, i64)")
+    irg_extern(g, "i32 @isatty(i32)")
     irg_extern(g, "i32 @rgc_emit_object(ptr, ptr)")
     irg_extern(g, "ptr @fopen(ptr, ptr)")
     irg_extern(g, "i64 @fread(ptr, i64, i64, ptr)")

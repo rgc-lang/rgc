@@ -124,3 +124,42 @@ public def read_file_or(path: str) -> str {
     }
     return r.unwrap()
 }
+
+# Run a shell command, redirecting stdout to a temporary file, and return its
+# trimmed contents (empty string when the command fails or the file is empty).
+def sh_output(cmd: str, path: str) -> str {
+    tmp = path
+    if host_is_windows() {
+        tmp = ".rgc-sh-output.tmp"
+        system(cmd + " > " + tmp)
+    } else {
+        system(cmd + " > " + path + " 2>/dev/null")
+    }
+    v = trim(read_file_or(tmp))
+    remove_file(tmp)
+    return v
+}
+
+# Read an environment variable through the shell (cross-platform: `echo %var%`
+# on Windows, `printenv` elsewhere). Returns "" when the variable is unset.
+public def env_value(name: str) -> str {
+    if host_is_windows() {
+        tmp = ".rgc-env.tmp"
+        system("echo %" + name + "% > " + tmp)
+        v = trim(read_file_or(tmp))
+        remove_file(tmp)
+        if v == "%" + name + "%" {
+            return ""
+        }
+        return v
+    }
+    return sh_output("printenv " + name, "/tmp/.rgc-env-" + name)
+}
+
+# Probe whether stderr is attached to a terminal, using `test -t 2` through the
+# shell. This works with any bootstrap compiler (the `stderr_is_tty` builtin is
+# only available in newer binaries), so the compiler source can rely on it even
+# when building itself from an older stage-1 binary.
+public def stderr_tty_probe() -> bool {
+    return str_eq(sh_output("test -t 2 && echo yes", "/tmp/.rgc-tty"), "yes")
+}

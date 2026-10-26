@@ -80,6 +80,33 @@ public def diag_repeat(ch: str, n: int) -> str {
     return out
 }
 
+# rustc-style ANSI coloring for diagnostics. Color is enabled when RGC_COLOR=always,
+# disabled when RGC_COLOR=never, and otherwise follows whether stderr is a terminal
+# (auto mode; the default).
+def diag_use_color() -> bool {
+    v = util.env_value("RGC_COLOR")
+    if str_eq(v, "always") {
+        return True
+    }
+    if str_eq(v, "never") {
+        return False
+    }
+    # Auto mode: color only when stderr is a terminal. Uses a shell probe so the
+    # compiler can build itself from an older stage-1 binary that predates the
+    # `stderr_is_tty` builtin.
+    return util.stderr_tty_probe()
+}
+
+# Wrap a string in an ANSI SGR escape sequence (ESC [ <sgr> m ... ESC [ 0 m) when
+# coloring is enabled; otherwise return the string unchanged, keeping the no-color
+# output byte-identical. `sgr` is the semicolon-separated code(s), e.g. "1;31".
+def diag_paint(on: bool, sgr: str, s: str) -> str {
+    if on {
+        return chr(27) + "[" + sgr + "m" + s + chr(27) + "[0m"
+    }
+    return s
+}
+
 public def diag_is_digit(c: int) -> bool {
     return c >= 48 and c <= 57
 }
@@ -157,7 +184,7 @@ public def diag_caret_len(line: str, spaces: int) -> int {
 # Rust-style detail: primary span (^) plus secondary spans (-) with labels,
 # followed by an optional `= note:` line and a `help:` line.
 public def diag_render_one(source_name: str, source: str, it: @DiagItem,
-                           width: int) -> str {
+                           width: int, uc: bool) -> str {
     lines = diag_lines(source)
     if width < 2 {
         width = 2
@@ -166,17 +193,20 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
     # Unified error code: error[E0XXX]: msg; legacy entries with an empty code
     # keep the original rustc-style "error: msg" header.
     if it.code.len() > 0 {
-        out = "error[" + it.code + "]: " + it.msg + "\n"
+        out = diag_paint(uc, "1;31", "error") + "[" +
+              diag_paint(uc, "1", it.code) + "]: " + it.msg + "\n"
     } else {
-        out = "error: " + it.msg + "\n"
+        out = diag_paint(uc, "1;31", "error") + ": " + it.msg + "\n"
     }
     if it.line < 1 {
-        out = out + diag_repeat(" ", width) + "--> " + source_name + "\n"
+        out = out + diag_repeat(" ", width) + diag_paint(uc, "34", "--> ") +
+              source_name + "\n"
         return out + "\n"
     }
-    out = out + diag_repeat(" ", width) + "--> " + source_name + ":" +
+    out = out + diag_repeat(" ", width) + diag_paint(uc, "34", "--> ") +
+          source_name + ":" +
           to_string(it.line) + ":" + to_string(it.col) + "\n"
-    out = out + diag_repeat(" ", width + 1) + "|\n"
+    out = out + diag_repeat(" ", width + 1) + diag_paint(uc, "34", "|") + "\n"
 
     # Collect spans: primary + secondary, with resolved source text.
     sp_lines = List[int]()
@@ -251,16 +281,16 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
         slines = diag_lines(sp_srcs.get(k))
         if ln >= 1 and ln <= slines.len() {
             if prev_line >= 0 and ln > prev_line + 1 {
-                out = out + diag_repeat(" ", width + 1) + "|\n"
+                out = out + diag_repeat(" ", width + 1) + diag_paint(uc, "34", "|") + "\n"
             }
             # Spans on the same source line share one source line (rustc style);
             # each span gets its own underline row (`^` for primary, `-` for secondary).
             group_src = sp_srcs.get(k)
             line_num = to_string(ln)
-            out = out + diag_repeat(" ", width - line_num.len()) + line_num + " | " +
-                  slines.get(ln - 1) + "\n"
+            out = out + diag_repeat(" ", width - line_num.len()) + line_num +
+                  diag_paint(uc, "34", " | ") + slines.get(ln - 1) + "\n"
             while k < n and sp_lines.get(k) == ln and str_eq(sp_srcs.get(k), group_src) {
-                out = out + diag_repeat(" ", width + 1) + "| "
+                out = out + diag_repeat(" ", width + 1) + diag_paint(uc, "34", "| ")
                 spaces = sp_cols.get(k) - 1
                 if spaces < 0 {
                     spaces = 0
@@ -268,13 +298,13 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
                 out = out + diag_repeat(" ", spaces)
                 if sp_prim.get(k) == 1 {
                     clen = diag_caret_len(slines.get(ln - 1), spaces)
-                    out = out + diag_repeat("^", clen)
+                    out = out + diag_paint(uc, "1;31", diag_repeat("^", clen))
                 } else {
                     l2 = sp_lens.get(k)
                     if l2 < 1 {
                         l2 = 1
                     }
-                    out = out + diag_repeat("-", l2)
+                    out = out + diag_paint(uc, "34", diag_repeat("-", l2))
                 }
                 if sp_labels.get(k).len() > 0 {
                     out = out + " " + sp_labels.get(k)
@@ -290,11 +320,11 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
 
     # Note and help lines (rustc style).
     if it.note.len() > 0 {
-        out = out + diag_repeat(" ", width + 1) + "|\n"
-        out = out + "= note: " + it.note + "\n"
+        out = out + diag_repeat(" ", width + 1) + diag_paint(uc, "34", "|") + "\n"
+        out = out + diag_paint(uc, "34", "= note: ") + it.note + "\n"
     }
     if it.help.len() > 0 {
-        out = out + "help: " + it.help + "\n"
+        out = out + diag_paint(uc, "32", "help: ") + it.help + "\n"
     }
     return out + "\n"
 }
@@ -350,11 +380,12 @@ public def diag_width(items: @List[DiagItem]) -> int {
 public def diag_render(source_name: str, source: str,
                        items: @List[DiagItem]) -> str {
     width = diag_width(items)
+    uc = diag_use_color()
     out = ""
     i = 0
     while i < items.len() {
         cur = items.get(i)
-        out = out + diag_render_one(source_name, source, @cur, width)
+        out = out + diag_render_one(source_name, source, @cur, width, uc)
         i = i + 1
     }
     return out + diag_explain_hint(items)
@@ -366,6 +397,7 @@ public def diag_render(source_name: str, source: str,
 public def diag_render_multi(entry_name: str, entry_src: str,
                              items: @List[DiagItem]) -> str {
     width = diag_width(items)
+    uc = diag_use_color()
     out = ""
     paths = List[str]()
     srcs = List[str]()
@@ -441,7 +473,7 @@ public def diag_render_multi(entry_name: str, entry_src: str,
             it.subs.set(si, sp)
             si = si + 1
         }
-        out = out + diag_render_one(name, src, @it, width)
+        out = out + diag_render_one(name, src, @it, width, uc)
         i = i + 1
     }
     return out + diag_explain_hint(items)

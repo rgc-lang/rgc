@@ -981,6 +981,14 @@ public def sema_register_builtins(s: @var Sema) {
     s.fn_param_kinds.put("exists", "str")
     s.fn_param_customs.put("exists", "")
 
+    # stderr_is_tty() -> bool: whether stderr is attached to a terminal (for colored diagnostics).
+    s.fn_ret_llvm.put("stderr_is_tty", "i1")
+    s.fn_ret_kinds.put("stderr_is_tty", "bool")
+    s.fn_ret_customs.put("stderr_is_tty", "")
+    s.fn_params_llvm.put("stderr_is_tty", "")
+    s.fn_param_kinds.put("stderr_is_tty", "")
+    s.fn_param_customs.put("stderr_is_tty", "")
+
     s.fn_ret_llvm.put("str_to_float", "double")
     s.fn_ret_kinds.put("str_to_float", "float")
     s.fn_ret_customs.put("str_to_float", "")
@@ -3683,6 +3691,12 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
                 sema_error(s, e.line, e.col, e.name + "() expects 1 argument")
             } else {
                 sema_check_expr(s, e.args.get(0))
+            }
+            return sema_builtin_fn_kind(s, e.name)
+        }
+        if str_eq(e.name, "stderr_is_tty") {
+            if e.args.len() != 0 {
+                sema_error(s, e.line, e.col, "stderr_is_tty() expects 0 arguments")
             }
             return sema_builtin_fn_kind(s, e.name)
         }
