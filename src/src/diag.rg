@@ -253,30 +253,37 @@ public def diag_render_one(source_name: str, source: str, it: @DiagItem,
             if prev_line >= 0 and ln > prev_line + 1 {
                 out = out + diag_repeat(" ", width + 1) + "|\n"
             }
+            # Spans on the same source line share one source line (rustc style);
+            # each span gets its own underline row (`^` for primary, `-` for secondary).
+            group_src = sp_srcs.get(k)
             line_num = to_string(ln)
             out = out + diag_repeat(" ", width - line_num.len()) + line_num + " | " +
                   slines.get(ln - 1) + "\n"
-            out = out + diag_repeat(" ", width + 1) + "| "
-            spaces = sp_cols.get(k) - 1
-            if spaces < 0 {
-                spaces = 0
-            }
-            out = out + diag_repeat(" ", spaces)
-            if sp_prim.get(k) == 1 {
-                clen = diag_caret_len(slines.get(ln - 1), spaces)
-                out = out + diag_repeat("^", clen)
-            } else {
-                l2 = sp_lens.get(k)
-                if l2 < 1 {
-                    l2 = 1
+            while k < n and sp_lines.get(k) == ln and str_eq(sp_srcs.get(k), group_src) {
+                out = out + diag_repeat(" ", width + 1) + "| "
+                spaces = sp_cols.get(k) - 1
+                if spaces < 0 {
+                    spaces = 0
                 }
-                out = out + diag_repeat("-", l2)
+                out = out + diag_repeat(" ", spaces)
+                if sp_prim.get(k) == 1 {
+                    clen = diag_caret_len(slines.get(ln - 1), spaces)
+                    out = out + diag_repeat("^", clen)
+                } else {
+                    l2 = sp_lens.get(k)
+                    if l2 < 1 {
+                        l2 = 1
+                    }
+                    out = out + diag_repeat("-", l2)
+                }
+                if sp_labels.get(k).len() > 0 {
+                    out = out + " " + sp_labels.get(k)
+                }
+                out = out + "\n"
+                k = k + 1
             }
-            if sp_labels.get(k).len() > 0 {
-                out = out + " " + sp_labels.get(k)
-            }
-            out = out + "\n"
             prev_line = ln
+            continue
         }
         k = k + 1
     }

@@ -406,6 +406,9 @@ public class Sema {
     cur_local_customs: Map[str, str]    # local variable name -> custom type name
     cur_fn_ret_kind: str
     cur_fn_ret_custom: str
+    cur_fn_ret_line: int                # return type annotation position (for "expected due to this")
+    cur_fn_ret_col: int
+    cur_fn_ret_len: int                 # length of the return type name as written
     cur_fn_name: str
     cur_fn_async: int                   # whether the current function is async def
     loop_depth: int
@@ -491,6 +494,9 @@ public def make_sema() -> Sema {
     s.cur_local_customs = Map[str, str]()
     s.cur_fn_ret_kind = "None"
     s.cur_fn_ret_custom = ""
+    s.cur_fn_ret_line = 0
+    s.cur_fn_ret_col = 0
+    s.cur_fn_ret_len = 1
     s.cur_fn_name = ""
     s.cur_fn_async = 0
     s.loop_depth = 0
@@ -797,6 +803,19 @@ public def sema_can_assign(fk: str, fc: str, tk: str, tc: str) -> bool {
         return True
     }
     return False
+}
+
+# rustc-style type-mismatch diagnostic: `= note: expected type X / found type Y`,
+# plus a secondary span at the expected-type source labeled "expected due to this".
+def sema_type_mismatch_diag(s: @var Sema, line: int, col: int, msg: str,
+                            exp_kind: str, exp_custom: str,
+                            fnd_kind: str, fnd_custom: str,
+                            exp_line: int, exp_col: int, exp_len: int) {
+    note = "expected type `" + sema_type_name(exp_kind, exp_custom) +
+           "`\n            found type `" + sema_type_name(fnd_kind, fnd_custom) + "`"
+    subs = List[DiagSpan]()
+    subs.push(make_diag_span(exp_line, exp_col, exp_len, "expected due to this"))
+    sema_error_full(s, line, col, sema_error_code_for_msg(msg), msg, "", note, subs)
 }
 
 public def sema_reset_var_state(s: @var Sema) {
@@ -2719,6 +2738,9 @@ public def sema_check_fn(s: @var Sema, f: Stmt, class_name: str) {
     renc = sema_encode_type(s, f.ret_type)
     s.cur_fn_ret_kind = sema_env_kind(renc)
     s.cur_fn_ret_custom = sema_env_custom(renc)
+    s.cur_fn_ret_line = f.ret_type.line
+    s.cur_fn_ret_col = f.ret_type.col
+    s.cur_fn_ret_len = f.ret_type.name.len()
 
     i = 0
     while i < f.params.len() {
@@ -2752,10 +2774,15 @@ public def sema_check_fn(s: @var Sema, f: Stmt, class_name: str) {
             lk = sema_check_expr(s, st.expr)
             lc = sema_expr_custom(s, st.expr)
             if not sema_can_assign(lk, lc, s.cur_fn_ret_kind, s.cur_fn_ret_custom) {
-                sema_error(s, st.expr.line, st.expr.col,
-                           "function '" + f.name + "' returns `" + sema_type_name(lk, lc) +
-                           "`, expected `" +
-                           sema_type_name(s.cur_fn_ret_kind, s.cur_fn_ret_custom) + "`")
+                sema_type_mismatch_diag(s, st.expr.line, st.expr.col,
+                                        "function '" + f.name + "' returns `" +
+                                        sema_type_name(lk, lc) + "`, expected `" +
+                                        sema_type_name(s.cur_fn_ret_kind,
+                                                       s.cur_fn_ret_custom) + "`",
+                                        s.cur_fn_ret_kind, s.cur_fn_ret_custom,
+                                        lk, lc,
+                                        s.cur_fn_ret_line, s.cur_fn_ret_col,
+                                        s.cur_fn_ret_len)
             }
         } else {
             sema_check_stmt(s, st)
@@ -2778,10 +2805,15 @@ public def sema_check_stmt(s: @var Sema, st: Stmt) {
             vc = sema_expr_custom(s, st.value)
             if not str_eq(s.cur_fn_ret_kind, "None") and
                not sema_can_assign(vk, vc, s.cur_fn_ret_kind, s.cur_fn_ret_custom) {
-                sema_error(s, st.value.line, st.value.col,
-                           "function '" + s.cur_fn_name + "' returns `" +
-                           sema_type_name(vk, vc) + "`, expected `" +
-                           sema_type_name(s.cur_fn_ret_kind, s.cur_fn_ret_custom) + "`")
+                sema_type_mismatch_diag(s, st.value.line, st.value.col,
+                                        "function '" + s.cur_fn_name + "' returns `" +
+                                        sema_type_name(vk, vc) + "`, expected `" +
+                                        sema_type_name(s.cur_fn_ret_kind,
+                                                       s.cur_fn_ret_custom) + "`",
+                                        s.cur_fn_ret_kind, s.cur_fn_ret_custom,
+                                        vk, vc,
+                                        s.cur_fn_ret_line, s.cur_fn_ret_col,
+                                        s.cur_fn_ret_len)
             }
         }
         pass
@@ -3794,9 +3826,13 @@ public def sema_check_expr(s: @var Sema, e: Expr) -> str {
             dk = sema_env_kind(denc)
             dc = sema_env_custom(denc)
             if not sema_can_assign(vk, vc, dk, dc) {
-                sema_error(s, ve.line, ve.col, "type mismatch: expected `" +
-                           sema_type_name(dk, dc) + "`, found `" +
-                           sema_type_name(vk, vc) + "`")
+                sema_type_mismatch_diag(s, ve.line, ve.col,
+                                        "type mismatch: expected `" +
+                                        sema_type_name(dk, dc) + "`, found `" +
+                                        sema_type_name(vk, vc) + "`",
+                                        dk, dc, vk, vc,
+                                        e.type_ann.line, e.type_ann.col,
+                                        e.type_ann.name.len())
             }
         }
         if s.cur_locals.contains(e.name) {
