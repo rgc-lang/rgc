@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       source_tag:
-        description: Source tag to build (e.g. v0.0.2)
+        description: Source tag to build (e.g. v0.0.4)
         required: true
-        default: v0.0.2
+        default: v0.0.4
       platforms:
         description: "Comma-separated platforms, or all"
         required: true
@@ -33,8 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BOOTSTRAP_TAG: v0.0.2
-  BOOTSTRAP_VERSION: 0.0.2
+  BOOTSTRAP_TAG: v0.0.3
+  BOOTSTRAP_VERSION: 0.0.3
   LLVM_VERSION: 23.1.4
 
 jobs:
@@ -247,6 +247,11 @@ jobs:
           "$PWD/hello" > /dev/null
           "$PWD/rgc2" examples/hello.rg --emit-exports "$PWD/exports.json"
           test -s "$PWD/exports.json"
+          # pyrgc v0.0.4+ wraps only `export def` functions, so the shipped compiler
+          # must parse the modifier and publish the flag.
+          printf 'export def probe(x: int) -> int {\n    return x\n}\n' > "$PWD/export_def.rg"
+          "$PWD/rgc2" "$PWD/export_def.rg" --emit-object --emit-exports "$PWD/export_def.json" -o "$PWD/export_def.o"
+          grep -q '"export": true' "$PWD/export_def.json"
 
       - name: Build self-hosted compiler (Windows)
         if: runner.os == 'Windows'
@@ -417,6 +422,14 @@ jobs:
           & "$root\rgc2.exe" examples\hello.rg --emit-exports "$root\exports.json"
           if ($LASTEXITCODE -ne 0) { throw "emit-exports failed" }
           if (-not (Test-Path "$root\exports.json")) { throw "exports.json not written" }
+          # pyrgc v0.0.4+ wraps only `export def` functions, so the shipped compiler
+          # must parse the modifier and publish the flag.
+          Set-Content -Path "$root\export_def.rg" -Value "export def probe(x: int) -> int {`n    return x`n}"
+          & "$root\rgc2.exe" "$root\export_def.rg" --emit-object --emit-exports "$root\export_def.json" -o "$root\export_def.o"
+          if ($LASTEXITCODE -ne 0) { throw "export def compile failed" }
+          if (-not (Select-String -Path "$root\export_def.json" -Pattern '"export": true' -Quiet)) {
+            throw "export def metadata missing"
+          }
 
       - name: Upload crash dumps (Windows)
         if: failure() && runner.os == 'Windows'
