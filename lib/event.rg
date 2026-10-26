@@ -1,8 +1,8 @@
 # RGC standard library: event
 #
-# Linux epoll event loop (single-threaded selector): registers fds and timeout timers,
-# then blocks waiting for ready events. Combined with net/udp non-blocking primitives, it enables event-driven IO.
-# It does not depend on compiler closures or function pointers; all low-level calls go through extern def + libc.
+# Cross-platform readiness loop built on poll(2) / WSAPoll: registers fds plus millisecond
+# timers, then blocks waiting for ready events. Combined with net/udp non-blocking primitives
+# it enables event-driven IO. All low-level calls go through extern def + libc/Winsock.
 #
 # Usage:
 #   import event
@@ -28,31 +28,51 @@
 #     and should be unique within a loop (0 <= token < 2^62).
 #   - wait(timeout_ms) waits for fd or timer events; timeout_ms < 0 means wait indefinitely,
 #     0 means poll once. Returns EventWait; timeout=True when events is empty and there is no error.
-#   - Timers are based on timerfd (CLOCK_MONOTONIC): add_timer fires once, add_interval fires periodically;
-#     expired events include ev_timeout() in events. cancel_timer cancels.
+#   - Timers come from time.monotonic_ms() deadlines: add_timer fires once, add_interval fires
+#     periodically; expired events include ev_timeout() in events. cancel_timer cancels.
 #   - post(token) can be called from other threads; it wakes wait and delivers an ev_wake() event.
-#   - Event bits: ev_in/ev_out/ev_err/ev_hup/ev_rdhup match epoll; ev_edge() can be added.
+#     The wake channel is a connected UDP loopback socket pair, so message order is preserved.
+#   - Event bits: ev_in/ev_out/ev_err/ev_hup/ev_rdhup match poll; ev_edge() is accepted but poll
+#     has no edge-triggered mode, so registrations stay level-triggered on every platform.
+#   - An fd closed without remove() is dropped silently the next time poll reports POLLNVAL,
+#     matching epoll's automatic deregistration.
 #   - A loop should only be waited on by one thread; add/remove/timer management should also run on that thread;
 #     only post is allowed to be called concurrently from other threads.
-#   - close closes the epoll fd, the wake pipe, and all timer fds; wait returns an error after close.
+#   - close closes the wake socket pair and drops all registrations; wait returns an error after close.
 
-extern def epoll_create1(flags: int) -> int
-extern def epoll_ctl(epfd: int, op: int, fd: int, ev: str) -> int
-extern def epoll_wait(epfd: int, evs: str, maxevents: int, timeout: int) -> int
-extern def socketpair(domain: int, kind: int, protocol: int, fds: str) -> int
-extern def timerfd_create(clockid: int, flags: int) -> int
-extern def timerfd_settime(fd: int, flags: int, new_value: str, old_value: str) -> int
-extern def read(fd: int, buf: str, count: int) -> int
+import time
+
+extern def poll(fds: str, nfds: int, timeout: int) -> int
+extern def socket(domain: int, kind: int, protocol: int) -> int
+extern def bind(fd: int, addr: str, len: int) -> int
+extern def connect(fd: int, addr: str, len: int) -> int
+extern def getsockname(fd: int, addr: str, len: str) -> int
+extern def recv(fd: int, buf: str, count: int, flags: int) -> int
 extern def send(fd: int, buf: str, len: int, flags: int) -> int
 extern def fcntl(fd: int, cmd: int, arg: int) -> int
 extern def close(fd: int) -> int
 extern def __errno_location() -> str
 extern def strerror(code: int) -> str
 
+class Watch {
+    fd: int
+    token: int
+    events: int
+    dead: bool
+}
+
 class TimerWatch {
     token: int
     fd: int
     interval_ms: int
+    next_ms: int
+}
+
+class WakePair {
+    ok: bool
+    error: str
+    r: int
+    w: int
 }
 
 public class Event {
@@ -73,10 +93,11 @@ public class EventWait {
 }
 
 public class EventLoop {
-    epfd: int
+    epfd: int   # open marker: 1 while open, -1 after close
     wake_r: int
     wake_w: int
     timers: List[TimerWatch]
+    watches: List[Watch]
     error: str
 
     def is_open(self) -> bool {
@@ -98,14 +119,16 @@ public class EventLoop {
             r.error = "token out of range"
             return r
         }
-        ev = make_ctl_event(events, token)
-        rc = epoll_ctl(self.epfd, 1, fd, ev)   # EPOLL_CTL_ADD
-        e = errno_code()
-        buf_free(ev)
-        if rc < 0 {
-            r.error = error_text(e)
+        if self.find_watch(fd) >= 0 {
+            r.error = error_text(17)   # EEXIST: poll has no duplicate registrations either
             return r
         }
+        w = Watch()
+        w.fd = fd
+        w.token = token
+        w.events = events
+        w.dead = False
+        self.watches.push(w)
         r.ok = True
         return r
     }
@@ -124,14 +147,15 @@ public class EventLoop {
             r.error = "token out of range"
             return r
         }
-        ev = make_ctl_event(events, token)
-        rc = epoll_ctl(self.epfd, 3, fd, ev)   # EPOLL_CTL_MOD
-        e = errno_code()
-        buf_free(ev)
-        if rc < 0 {
-            r.error = error_text(e)
+        i = self.find_watch(fd)
+        if i < 0 {
+            r.error = error_text(2)   # ENOENT, matching epoll_ctl MOD on an unknown fd
             return r
         }
+        w = self.watches.get(i)
+        w.token = token
+        w.events = events
+        self.watches.set(i, w)   # List holds class values; writes must be stored back
         r.ok = True
         return r
     }
@@ -146,14 +170,12 @@ public class EventLoop {
             r.error = "invalid fd"
             return r
         }
-        ev = make_ctl_event(0, 0)
-        rc = epoll_ctl(self.epfd, 2, fd, ev)   # EPOLL_CTL_DEL
-        e = errno_code()
-        buf_free(ev)
-        if rc < 0 {
-            r.error = error_text(e)
+        i = self.find_watch(fd)
+        if i < 0 {
+            r.error = error_text(2)
             return r
         }
+        self.drop_watch_at(i)
         r.ok = True
         return r
     }
@@ -185,40 +207,11 @@ public class EventLoop {
             interval_ms = 0
         }
         self.drop_timer(token)
-        tfd = timerfd_create(1, 526336)   # CLOCK_MONOTONIC | TFD_NONBLOCK | TFD_CLOEXEC
-        if tfd < 0 {
-            r.error = error_text(errno_code())
-            return r
-        }
-        spec = buf_alloc(32)
-        buf_zero(spec, 32)
-        if interval_ms > 0 {
-            buf_set64(spec, 0, interval_ms / 1000)
-            buf_set64(spec, 8, interval_ms % 1000 * 1000000)
-        }
-        buf_set64(spec, 16, delay_ms / 1000)
-        buf_set64(spec, 24, delay_ms % 1000 * 1000000)
-        rc = timerfd_settime(tfd, 0, spec, ptr_null())
-        e = errno_code()
-        buf_free(spec)
-        if rc < 0 {
-            close(tfd)
-            r.error = error_text(e)
-            return r
-        }
-        ev = make_ctl_event(1, token | timer_flag())   # EPOLLIN
-        rc2 = epoll_ctl(self.epfd, 1, tfd, ev)
-        e2 = errno_code()
-        buf_free(ev)
-        if rc2 < 0 {
-            close(tfd)
-            r.error = error_text(e2)
-            return r
-        }
         t = TimerWatch()
         t.token = token
-        t.fd = tfd
+        t.fd = -1
         t.interval_ms = interval_ms
+        t.next_ms = time.monotonic_ms() + delay_ms
         self.timers.push(t)
         r.ok = True
         return r
@@ -237,7 +230,6 @@ public class EventLoop {
         while i >= 0 {
             t = self.timers.get(i)
             if t.token == token {
-                close(t.fd)
                 last = self.timers.len() - 1
                 if i != last {
                     self.timers.set(i, self.timers.get(last))
@@ -266,10 +258,44 @@ public class EventLoop {
         if ms < -1 {
             ms = -1
         }
-        evs = buf_alloc(768)   # 64 * 12 bytes (packed struct epoll_event)
+        now = time.monotonic_ms()
+        deadline = -1
+        if ms >= 0 {
+            deadline = now + ms
+        }
+        next = self.next_timer_ms()
+        if next >= 0 {
+            d = next - now
+            if d < 0 {
+                d = 0
+            }
+            if deadline < 0 or d < deadline - now {
+                deadline = now + d
+            }
+        }
+        pms = -1
+        if deadline >= 0 {
+            pms = deadline - now
+            if pms < 0 {
+                pms = 0
+            }
+            if pms > 2147483647 {
+                pms = 2147483647
+            }
+        }
+        count = self.watches.len() + 1
+        fds = buf_alloc(count * 8)
+        buf_zero(fds, count * 8)
+        set_pollfd(fds, 0, self.wake_r, 1)   # POLLIN
+        i = 0
+        while i < self.watches.len() {
+            w = self.watches.get(i)
+            set_pollfd(fds, (i + 1) * 8, w.fd, poll_events(w.events))
+            i = i + 1
+        }
         n = 0
         while True {
-            n = epoll_wait(self.epfd, evs, 64, ms)
+            n = poll(fds, count, pms)
             if n < 0 and errno_code() == 4 {   # EINTR
                 continue
             }
@@ -277,28 +303,31 @@ public class EventLoop {
         }
         if n < 0 {
             e = errno_code()
-            buf_free(evs)
+            buf_free(fds)
             r.ok = False
             r.error = error_text(e)
             return r
         }
-        i = 0
-        while i < n {
-            off = i * 12
-            bits = buf_get32(evs, off)
-            tok = buf_get64(evs, off + 4)
-            if tok == wake_token() {
-                # The wake pipe is always drained in drain_wake, so multiple posts can be coalesced.
-            } elif (tok & timer_flag()) != 0 {
-                ttoken = tok & timer_mask()
-                r.events.push(make_event(ev_timeout_value(), ttoken))
-                self.consume_timer(ttoken)
-            } else {
-                r.events.push(make_event(bits, tok))
+        if n > 0 {
+            i = 0
+            while i < self.watches.len() {
+                w = self.watches.get(i)
+                off = (i + 1) * 8 + 6
+                rev = buf_get8(fds, off) + buf_get8(fds, off + 1) * 256
+                if rev != 0 {
+                    if (rev & 32) != 0 {   # POLLNVAL: the fd was closed, drop it like epoll does
+                        w.dead = True
+                        self.watches.set(i, w)
+                    } else {
+                        r.events.push(make_event(poll_bits(rev), w.token))
+                    }
+                }
+                i = i + 1
             }
-            i = i + 1
+            self.reap_dead_watches()
         }
-        buf_free(evs)
+        self.collect_timers(r.events)
+        buf_free(fds)
         pending = r.events
         self.drain_wake(pending)
         r.events = pending
@@ -308,10 +337,80 @@ public class EventLoop {
         return r
     }
 
+    def next_timer_ms(self) -> int {
+        n = -1
+        i = 0
+        while i < self.timers.len() {
+            t = self.timers.get(i)
+            if n < 0 or t.next_ms < n {
+                n = t.next_ms
+            }
+            i = i + 1
+        }
+        return n
+    }
+
+    def collect_timers(self, out: @var List[Event]) {
+        now = time.monotonic_ms()
+        i = 0
+        while i < self.timers.len() {
+            t = self.timers.get(i)
+            if t.next_ms <= now {
+                out.push(make_event(ev_timeout_value(), t.token))
+                if t.interval_ms <= 0 {
+                    last = self.timers.len() - 1
+                    if i != last {
+                        self.timers.set(i, self.timers.get(last))
+                    }
+                    self.timers.pop()
+                } else {
+                    next = t.next_ms + t.interval_ms
+                    while next <= now {
+                        next = next + t.interval_ms
+                    }
+                    t.next_ms = next
+                    self.timers.set(i, t)
+                    i = i + 1
+                }
+            } else {
+                i = i + 1
+            }
+        }
+    }
+
+    def find_watch(self, fd: int) -> int {
+        i = 0
+        while i < self.watches.len() {
+            if self.watches.get(i).fd == fd {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    def drop_watch_at(self, i: int) {
+        last = self.watches.len() - 1
+        if i != last {
+            self.watches.set(i, self.watches.get(last))
+        }
+        self.watches.pop()
+    }
+
+    def reap_dead_watches(self) {
+        i = self.watches.len() - 1
+        while i >= 0 {
+            if self.watches.get(i).dead {
+                self.drop_watch_at(i)
+            }
+            i = i - 1
+        }
+    }
+
     def drain_wake(self, out: @var List[Event]) {
         b = buf_alloc(8)
         while True {
-            n = read(self.wake_r, b, 8)
+            n = recv(self.wake_r, b, 8, 0)
             if n != 8 {
                 break
             }
@@ -320,33 +419,8 @@ public class EventLoop {
         buf_free(b)
     }
 
-    def consume_timer(self, token: int) {
-        i = self.timers.len() - 1
-        while i >= 0 {
-            t = self.timers.get(i)
-            if t.token == token {
-                b = buf_alloc(8)
-                read(t.fd, b, 8)   # clear the expiration count
-                buf_free(b)
-                if t.interval_ms <= 0 {
-                    close(t.fd)
-                    last = self.timers.len() - 1
-                    if i != last {
-                        self.timers.set(i, self.timers.get(last))
-                    }
-                    self.timers.pop()
-                }
-                return
-            }
-            i = i - 1
-        }
-    }
-
     def close(self) {
-        if self.epfd >= 0 {
-            close(self.epfd)
-            self.epfd = -1
-        }
+        self.epfd = -1
         if self.wake_r >= 0 {
             close(self.wake_r)
             self.wake_r = -1
@@ -355,25 +429,9 @@ public class EventLoop {
             close(self.wake_w)
             self.wake_w = -1
         }
-        i = 0
-        while i < self.timers.len() {
-            close(self.timers.get(i).fd)
-            i = i + 1
-        }
         self.timers.clear()
+        self.watches.clear()
     }
-}
-
-def timer_flag() -> int {
-    return 4611686018427387904   # 1 << 62
-}
-
-def timer_mask() -> int {
-    return 4611686018427387903
-}
-
-def wake_token() -> int {
-    return -1
 }
 
 def ev_timeout_value() -> int {
@@ -417,7 +475,45 @@ public def ev_wake() -> int {
 }
 
 def token_ok(token: int) -> bool {
-    return token >= 0 and token <= timer_mask()
+    return token >= 0 and token <= 4611686018427387903   # < 2^62
+}
+
+# poll(2) revents -> Event.events bits; POLLNVAL is handled by the caller.
+def poll_bits(rev: int) -> int {
+    bits = 0
+    if (rev & 1) != 0 {
+        bits = bits | 1
+    }
+    if (rev & 4) != 0 {
+        bits = bits | 4
+    }
+    if (rev & 8) != 0 {
+        bits = bits | 8
+    }
+    if (rev & 16) != 0 {
+        bits = bits | 16
+    }
+    if (rev & 8192) != 0 {
+        bits = bits | 8192
+    }
+    return bits
+}
+
+# Event.events -> pollfd.events; only readable/writable/half-close are meaningful under poll.
+def poll_events(events: int) -> int {
+    want = events & 5
+    if (events & 8192) != 0 {
+        want = want | 8192
+    }
+    return want
+}
+
+def set_pollfd(b: str, off: int, fd: int, events: int) {
+    buf_set32(b, off, fd)
+    buf_set8(b, off + 4, events % 256)
+    buf_set8(b, off + 5, (events / 256) % 256)
+    buf_set8(b, off + 6, 0)
+    buf_set8(b, off + 7, 0)
 }
 
 def make_event(events: int, token: int) -> Event {
@@ -425,14 +521,6 @@ def make_event(events: int, token: int) -> Event {
     e.token = token
     e.events = events
     return e
-}
-
-def make_ctl_event(events: int, token: int) -> str {
-    b = buf_alloc(12)
-    buf_zero(b, 12)
-    buf_set32(b, 0, events)
-    buf_set64(b, 4, token)
-    return b
 }
 
 def init_op() -> EventOp {
@@ -477,45 +565,109 @@ def set_nonblocking(fd: int, on: bool) {
     }
 }
 
+# Connected UDP loopback pair: a wake message survives as one datagram per post, so
+# concurrent posts stay distinct, unlike a byte-stream pipe that can merge writes.
+def make_wake_pair() -> WakePair {
+    p = WakePair()
+    p.ok = False
+    p.error = ""
+    p.r = -1
+    p.w = -1
+    e = 0
+    r = socket(2, 2, 0)   # AF_INET / SOCK_DGRAM
+    if r < 0 {
+        e = errno_code()
+    }
+    w = -1
+    if e == 0 {
+        w = socket(2, 2, 0)
+        if w < 0 {
+            e = errno_code()
+        }
+    }
+    a = buf_alloc(32)
+    buf_zero(a, 32)
+    buf_set32(a, 0, 2)   # AF_INET, port 0 (wildcard bind)
+    if e == 0 {
+        rc1 = bind(r, a, 16)
+        if rc1 != 0 {
+            e = errno_code()
+        }
+    }
+    if e == 0 {
+        lp1 = buf_alloc(4)
+        buf_set32(lp1, 0, 16)
+        rc2 = getsockname(r, a, lp1)
+        if rc2 != 0 {
+            e = errno_code()
+        }
+        buf_free(lp1)
+    }
+    if e == 0 {
+        buf_set8(a, 4, 127)   # 127.0.0.1 in network byte order
+        buf_set8(a, 5, 0)
+        buf_set8(a, 6, 0)
+        buf_set8(a, 7, 1)
+        rc3 = connect(w, a, 16)
+        if rc3 != 0 {
+            e = errno_code()
+        }
+    }
+    if e == 0 {
+        buf_zero(a, 16)
+        buf_set32(a, 0, 2)
+        lp2 = buf_alloc(4)
+        buf_set32(lp2, 0, 16)
+        rc4 = getsockname(w, a, lp2)
+        if rc4 != 0 {
+            e = errno_code()
+        }
+        buf_free(lp2)
+    }
+    if e == 0 {
+        buf_set8(a, 4, 127)
+        buf_set8(a, 5, 0)
+        buf_set8(a, 6, 0)
+        buf_set8(a, 7, 1)
+        rc5 = connect(r, a, 16)
+        if rc5 != 0 {
+            e = errno_code()
+        }
+    }
+    buf_free(a)
+    if e != 0 {
+        if r >= 0 {
+            close(r)
+        }
+        if w >= 0 {
+            close(w)
+        }
+        p.error = error_text(e)
+        return p
+    }
+    set_nonblocking(r, True)
+    p.ok = True
+    p.r = r
+    p.w = w
+    return p
+}
+
 public def new_loop() -> EventLoop {
     l = EventLoop()
     l.epfd = -1
     l.wake_r = -1
     l.wake_w = -1
     l.timers = List[TimerWatch]()
+    l.watches = List[Watch]()
     l.error = ""
-    ep = epoll_create1(0)
-    if ep < 0 {
-        l.error = error_text(errno_code())
+    p = make_wake_pair()
+    if not p.ok {
+        l.error = p.error
         return l
     }
-    fds = buf_alloc(8)
-    buf_zero(fds, 8)
-    rc = socketpair(1, 1, 0, fds)   # AF_UNIX / SOCK_STREAM
-    if rc < 0 {
-        l.error = error_text(errno_code())
-        close(ep)
-        buf_free(fds)
-        return l
-    }
-    rfd = buf_get32(fds, 0)
-    wfd = buf_get32(fds, 4)
-    buf_free(fds)
-    set_nonblocking(rfd, True)
-    ev = make_ctl_event(1, wake_token())   # EPOLLIN
-    rc2 = epoll_ctl(ep, 1, rfd, ev)
-    e2 = errno_code()
-    buf_free(ev)
-    if rc2 < 0 {
-        l.error = error_text(e2)
-        close(ep)
-        close(rfd)
-        close(wfd)
-        return l
-    }
-    l.epfd = ep
-    l.wake_r = rfd
-    l.wake_w = wfd
+    l.epfd = 1
+    l.wake_r = p.r
+    l.wake_w = p.w
     return l
 }
 
@@ -523,35 +675,25 @@ public def errno_value() -> int {
     return errno_code()
 }
 
-# One-shot epoll readiness wait without constructing an EventLoop.
+# One-shot readiness wait without constructing an EventLoop.
 # Returns 1 when ready, 0 on timeout, -1 on error. Intended for async wrappers that
 # wait in short slices and poll asyncio.cancelled() between slices.
 public def wait_fd(fd: int, events: int, timeout_ms: int) -> int {
     if fd < 0 {
         return -1
     }
-    ep = epoll_create1(0)
-    if ep < 0 {
-        return -1
-    }
-    ev = make_ctl_event(events, 1)
-    rc = epoll_ctl(ep, 1, fd, ev)
-    buf_free(ev)
-    if rc < 0 {
-        close(ep)
-        return -1
-    }
-    evs = buf_alloc(12)
+    fds = buf_alloc(8)
+    buf_zero(fds, 8)
+    set_pollfd(fds, 0, fd, poll_events(events))
     n = -1
     while True {
-        n = epoll_wait(ep, evs, 1, timeout_ms)
+        n = poll(fds, 1, timeout_ms)
         if n < 0 and errno_code() == 4 {   # EINTR
             continue
         }
         break
     }
-    buf_free(evs)
-    close(ep)
+    buf_free(fds)
     return n
 }
 

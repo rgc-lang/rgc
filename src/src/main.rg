@@ -106,6 +106,7 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
     g = make_irgen(@var s)
     g.source_path = src_path
     g.opt_level = opt_level
+    g.win_dll_export = shared_link and host_is_windows()
     if debug_info {
         g.debug_info = 1
     }
@@ -135,9 +136,19 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
         write_stderr("codegen failed.\n")
         return 1
     }
-    link_cmd = "g++ -g " + obj_path + " -lm -lpthread -o " + output
-    if shared_link {
-        link_cmd = "g++ -shared -fPIC -g " + obj_path + " -lm -lpthread -o " + output
+    qobj = shell_quote(obj_path)
+    qout = shell_quote(output)
+    if host_is_windows() {
+        # Winsock, Win32 thread/console APIs, and BCrypt (entropy) come from system import libraries; the CRT is linked by default.
+        link_cmd = "g++ -g " + qobj + " -o " + qout + " -lws2_32 -lbcrypt"
+        if shared_link {
+            link_cmd = "g++ -shared -g " + qobj + " -o " + qout + " -lws2_32 -lbcrypt"
+        }
+    } else {
+        link_cmd = "g++ -g " + qobj + " -lm -lpthread -o " + qout
+        if shared_link {
+            link_cmd = "g++ -shared -fPIC -g " + qobj + " -lm -lpthread -o " + qout
+        }
     }
     if link_args.len() > 0 {
         link_cmd = link_cmd + " " + link_args
@@ -155,6 +166,10 @@ public def compile_and_link(src_path: str, output: str, emit_llvm: bool,
 # Compile to a temporary file and run.
 public def run_program(src_path: str, extra_args: str) -> int {
     tmp = "/tmp/rgc_run"
+    if host_is_windows() {
+        # MinGW appends .exe when the output name has no suffix; spawn it directly from the cwd.
+        tmp = ".rgc_run.exe"
+    }
     rc = compile_and_link(src_path, tmp, False, "", 2, False, False, False, "")
     if rc != 0 {
         return 1

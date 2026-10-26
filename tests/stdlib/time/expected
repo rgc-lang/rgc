@@ -1,3 +1,5 @@
 monotonic True
 elapsed_reasonable True
 now_positive True
+monotonic_ms_positive True
+monotonic_ms_elapsed True

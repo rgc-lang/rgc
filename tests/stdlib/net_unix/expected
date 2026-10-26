@@ -1,0 +1,13 @@
+listen True
+connect True
+accept True
+client_send 10
+server_recv True unix hello
+server_send 10
+client_recv True unix world
+eof True 0
+missing False True
+empty_path False socket path is empty
+long_path False socket path too long
+long_connect False socket path too long
+stale_cleanup True

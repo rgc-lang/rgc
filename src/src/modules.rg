@@ -55,6 +55,11 @@ def sh_output(cmd: str, path: str) -> str {
 }
 
 def is_windows() -> bool {
+    # The OS environment variable is authoritative (bare `rgc` from PATH has no path separator to inspect);
+    # the argv[0] shape remains a fallback for environments that scrub OS.
+    if host_is_windows() {
+        return True
+    }
     av = args()
     if av.len() == 0 {
         return False
@@ -118,6 +123,29 @@ def compiler_exe() -> str {
         return slash_path(p)
     }
     q = sh_quote(p)
+    if is_windows() {
+        if str_find(p, "\\") >= 0 {
+            return slash_path(p)
+        }
+        if str_find(p, "/") >= 0 {
+            # MSYS/Git Bash may hand over a POSIX-style absolute path; convert it when possible.
+            if p.startswith("/") {
+                w = sh_output("cygpath -w " + q, ".rgc-exe-path.tmp")
+                line = first_line(w)
+                if line.len() > 0 {
+                    return slash_path(line)
+                }
+            }
+            return slash_path(p)
+        }
+        # Bare command name: `where` performs the PATH search; take its first match.
+        r = sh_output("where " + q, ".rgc-exe-path.tmp")
+        line = first_line(r)
+        if line.len() > 0 {
+            return slash_path(line)
+        }
+        return p
+    }
     if str_find(p, "/") >= 0 {
         # readlink -f resolves symlinks on Linux; BSD readlink rejects -f, so keep p on failure.
         r = sh_output("readlink -f " + q, "/tmp/.rgc-exe-path")
@@ -160,7 +188,11 @@ def stdlib_dirs() -> List[str] {
     dirs = List[str]()
     std_env = env_value("RGC_STD")
     if std_env.len() > 0 {
-        parts = std_env.split(":")
+        sep = ":"
+        if is_windows() {
+            sep = ";"
+        }
+        parts = std_env.split(sep)
         i = 0
         while i < parts.len() {
             add_search_dir(@var dirs, trim(parts.get(i)))
@@ -184,18 +216,27 @@ def stdlib_dirs() -> List[str] {
         }
         k = k + 1
     }
-    add_search_dir(@var dirs, "/usr/local/lib/rgc")
-    add_search_dir(@var dirs, "/usr/lib/rgc")
+    if not is_windows() {
+        add_search_dir(@var dirs, "/usr/local/lib/rgc")
+        add_search_dir(@var dirs, "/usr/lib/rgc")
+    }
     return dirs
 }
 
 public def make_module_loader(src_path: str) -> ModuleLoader {
     l = ModuleLoader()
     slash = str_rfind(src_path, "/")
+    bslash = str_rfind(src_path, "\\")
+    if bslash > slash {
+        slash = bslash
+    }
     if slash >= 0 {
         l.dir = src_path.slice(0, slash)
     } else {
         l.dir = "."
+    }
+    if is_windows() {
+        l.dir = slash_path(l.dir)
     }
     if l.dir.len() == 0 {
         l.dir = "."

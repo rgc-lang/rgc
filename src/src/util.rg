@@ -4,6 +4,38 @@
 #   - runtime string `==` compares only pointers; compare content with len+contains instead
 #   - List[T]() cannot be written inside generic function bodies; list construction helpers are non-generic functions
 
+import os
+
+# Host OS detection: Windows sets OS=Windows_NT in the process environment.
+public def host_is_windows() -> bool {
+    v = os.getenv("OS")
+    if v.is_nothing() {
+        return False
+    }
+    return str_eq(v.unwrap(), "Windows_NT")
+}
+
+# Quote a path for the host shell command line.
+public def shell_quote(s: str) -> str {
+    if host_is_windows() {
+        return "\"" + s + "\""
+    }
+    return "'" + s + "'"
+}
+
+# First line of multi-line command output (drops the trailing CR/LF).
+public def first_line(s: str) -> str {
+    i = 0
+    while i < s.len() {
+        c = s.char_at(i)
+        if c == 10 or c == 13 {
+            return s.slice(0, i)
+        }
+        i = i + 1
+    }
+    return s
+}
+
 # String content equality (same length and mutually contained).
 public def str_eq(a: str, b: str) -> bool {
     if a.len() != b.len() {

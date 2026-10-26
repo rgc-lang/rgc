@@ -668,7 +668,7 @@ def sa_family(sa: str) -> int {
 
 def sa_port(sa: str) -> int {
     f = sa_family(sa)
-    if f == 2 or f == 10 {   # AF_INET / AF_INET6
+    if f == 2 or f == 10 or f == 23 {   # AF_INET / AF_INET6 (Linux / Winsock)
         return buf_get8(sa, 2) * 256 + buf_get8(sa, 3)
     }
     return -1

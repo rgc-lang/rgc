@@ -691,6 +691,7 @@ public def sema_register_builtins(s: @var Sema) {
 
     # Virtual stdlib modules time / random / os / asyncio: qualified-name calls generate libc calls directly in IR.
     sema_reg_builtin_fn(s, "time.now_monotonic", "double", "float", "", "", "", "")
+    sema_reg_builtin_fn(s, "time.monotonic_ms", "i64", "int", "", "", "", "")
     sema_reg_builtin_fn(s, "time.now", "i64", "int", "", "", "", "")
     sema_reg_builtin_fn(s, "time.sleep", "void", "None", "", "double", "float", "")
     sema_reg_builtin_fn(s, "random.seed", "void", "None", "", "i64", "int", "")
@@ -1310,6 +1311,7 @@ public def sema_module_builtin_alias(module: str, name: str) -> str {
     }
     if str_eq(module, "time") {
         if str_eq(name, "now_monotonic") { return "time.now_monotonic" }
+        if str_eq(name, "monotonic_ms") { return "time.monotonic_ms" }
         if str_eq(name, "now") { return "time.now" }
         if str_eq(name, "sleep") { return "time.sleep" }
     }
