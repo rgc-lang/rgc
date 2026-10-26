@@ -208,13 +208,14 @@ def main() {
 - **语句位置 if**：语句位置的 `if/else` 不再要求分支尾表达式类型一致（值被丢弃），表达式位置仍检查；`lib/net.rg` 等系统库代码依赖此语义。
 - **extern 声明按函数名去重**：多个标准库模块重复 `extern def` 同一 C 函数（文本格式可能不同）只发一条 `declare`。
 
-### 3.13 FFI（extern def）
+### 3.13 FFI（extern def / export def）
 
 - **`extern def name(...) -> ret`**：声明 C ABI 外部函数（无函数体），符号由链接器解析（libc 默认已链接，其他库用 `--link-args`）。`extern` 是上下文修饰符（非关键词），符号保持裸名、不做模块改名。
 - **类型映射**：参数 `int`=i64 / `float`=double / `bool`=_Bool(i8) / `str`=ptr；返回 `int`=C int(i32，调用点 sext 回 64 位) / `bool` 按 C 真值语义（非零即真）/ `None`=void。
 - **限制**：不能有函数体、不能泛型、不支持自定义类型与借用。
 - **`--emit-object`**：只产出目标文件；**`--shared`**：链接为共享库（输出为 PIC）。
-- **pyrgc**：官方 Python 绑定框架（CPython C API），`pyrgc.export` 标记 + 胶水生成，详见 [FFI.md](FFI.md)。
+- **`export def name(...)`**：声明该函数可被宿主运行时的绑定生成器包装（与 `extern` 一样是上下文修饰符、非关键词）。与 `public` 正交：`public` 管 RGC 模块间可见性，`export` 管宿主可见性；`public export def` 同时具备两者。标记只进 `--emit-exports` 元数据（`"export": true`），不改变生成代码，标准库不需要任何绑定运行时模块。
+- **pyrgc**：官方 Python 绑定框架（CPython C API），只包装带 `export` 标记的入口文件函数，签名取自编译器元数据，详见 [FFI.md](FFI.md)。
 
 ## 4. 类型系统
 

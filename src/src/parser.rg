@@ -175,6 +175,15 @@ public def parser_parse_stmt(p: @var Parser) -> Stmt {
             s.is_public = True
             return s
         }
+        if t.kind == TokIdent() and str_eq(t.text, "export") and
+           parser_peek2(p).kind == TokDef() {
+            parser_advance(p)   # export
+            parser_advance(p)   # def
+            s = parser_parse_fn_def(p)
+            s.is_public = True
+            s.is_export = True
+            return s
+        }
         if parser_match(p, TokDef()) {
             s = parser_parse_fn_def(p)
             s.is_public = True
@@ -211,6 +220,29 @@ public def parser_parse_stmt(p: @var Parser) -> Stmt {
         s = parser_parse_fn_def(p)
         s.is_async = True
         return s
+    }
+    # export def: a declaration a host runtime's binding generator may wrap (`export` is a
+    # contextual modifier, not a keyword). Orthogonal to `public`: `public` is visibility to
+    # other RGC modules, `export` is visibility to the host runtime — the same split as
+    # `pub fn` vs `#[pyfunction]` in PyO3, where only the marked ones reach Python.
+    t = parser_peek(p)
+    if t.kind == TokIdent() and str_eq(t.text, "export") {
+        if parser_peek2(p).kind == TokDef() {
+            parser_advance(p)   # export
+            parser_advance(p)   # def
+            s = parser_parse_fn_def(p)
+            s.is_export = True
+            return s
+        }
+        if parser_peek2(p).kind == TokPublic() {
+            parser_advance(p)   # export
+            parser_advance(p)   # public
+            parser_expect(p, TokDef(), "'def' after 'public'")
+            s = parser_parse_fn_def(p)
+            s.is_public = True
+            s.is_export = True
+            return s
+        }
     }
     # extern def: a C-ABI external function declaration (`extern` is a contextual modifier, not a keyword).
     t = parser_peek(p)

@@ -58,3 +58,13 @@ public def scalars(a: int, b: float, c: bool) -> int {
 def priv(s: str) -> str {
     return "p" + s
 }
+
+# `export` is orthogonal to `public`: the first is visibility to a host runtime's binding
+# generator, the second is visibility to other RGC modules. Either can stand alone.
+export def exported_only(a: int) -> int {
+    return a
+}
+
+public export def exported_public(a: int) -> int {
+    return a
+}

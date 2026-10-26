@@ -25,17 +25,21 @@ def count_occ(hay: str, needle: str) -> int {
 
 def expectations() -> List[str] {
     xs = List[str]()
-    xs.push("{\"name\": \"lit\", \"public\": true, \"params\": [], \"ret\": \"str\", \"str_ret\": \"static\"}")
-    xs.push("{\"name\": \"param\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"borrowed\"}")
-    xs.push("{\"name\": \"concat\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
-    xs.push("{\"name\": \"via_local\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
-    xs.push("{\"name\": \"trailing\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
-    xs.push("{\"name\": \"branch_owned\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
-    xs.push("{\"name\": \"branch_mixed\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
-    xs.push("{\"name\": \"via_call\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
-    xs.push("{\"name\": \"reassigned\", \"public\": true, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
-    xs.push("{\"name\": \"scalars\", \"public\": true, \"params\": [{\"name\": \"a\", \"type\": \"int\"}, {\"name\": \"b\", \"type\": \"float\"}, {\"name\": \"c\", \"type\": \"bool\"}], \"ret\": \"int\", \"str_ret\": \"\"}")
-    xs.push("{\"name\": \"priv\", \"public\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    xs.push("{\"name\": \"lit\", \"public\": true, \"export\": false, \"params\": [], \"ret\": \"str\", \"str_ret\": \"static\"}")
+    xs.push("{\"name\": \"param\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"borrowed\"}")
+    xs.push("{\"name\": \"concat\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    xs.push("{\"name\": \"via_local\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    xs.push("{\"name\": \"trailing\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    xs.push("{\"name\": \"branch_owned\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    xs.push("{\"name\": \"branch_mixed\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
+    xs.push("{\"name\": \"via_call\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
+    xs.push("{\"name\": \"reassigned\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"unknown\"}")
+    xs.push("{\"name\": \"scalars\", \"public\": true, \"export\": false, \"params\": [{\"name\": \"a\", \"type\": \"int\"}, {\"name\": \"b\", \"type\": \"float\"}, {\"name\": \"c\", \"type\": \"bool\"}], \"ret\": \"int\", \"str_ret\": \"\"}")
+    xs.push("{\"name\": \"priv\", \"public\": false, \"export\": false, \"params\": [{\"name\": \"s\", \"type\": \"str\"}], \"ret\": \"str\", \"str_ret\": \"owned\"}")
+    # `export def` alone: offered to the host runtime, still module-private.
+    xs.push("{\"name\": \"exported_only\", \"public\": false, \"export\": true, \"params\": [{\"name\": \"a\", \"type\": \"int\"}], \"ret\": \"int\", \"str_ret\": \"\"}")
+    # `public export def`: both visibilities.
+    xs.push("{\"name\": \"exported_public\", \"public\": true, \"export\": true, \"params\": [{\"name\": \"a\", \"type\": \"int\"}], \"ret\": \"int\", \"str_ret\": \"\"}")
     return xs
 }
 
@@ -62,6 +66,11 @@ def main() -> int {
 
     meta = _testlib.readf(meta_path)
     fails = 0
+    # Format 2 added the `export` flag; a generator that reads format 1 cannot see `export def`.
+    if not meta.contains("\"format\": 2") {
+        print("FAIL exports: metadata format is not 2")
+        fails = fails + 1
+    }
     xs = expectations()
     i = 0
     while i < xs.len() {

@@ -68,6 +68,7 @@ def main() -> int {
         "assert m.greet('rgc') == 'hello, rgc!'; " +
         "assert m.is_even(10) is True; assert m.is_even(7) is False; " +
         "assert abs(m.dist(0, 0, 3, 4) - 5.0) < 1e-9; assert m.say_hi() is None; " +
+        "assert not hasattr(m, 'scale_internal'); " +
         "print('pyrgc probe ok')"
     rc = _testlib.run_rc(
         "python3 -c \"" + probe + "\" " + _testlib.q(out) +

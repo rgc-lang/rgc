@@ -269,6 +269,13 @@ def exports_render_fn(f: Stmt) -> str {
     } else {
         out = out + "\"public\": false, "
     }
+    # `export def` — the only functions a binding generator may wrap. The compiler owns this
+    # marker so the generator never has to re-derive it by scanning source text.
+    if f.is_export {
+        out = out + "\"export\": true, "
+    } else {
+        out = out + "\"export\": false, "
+    }
     out = out + "\"params\": ["
     i = 0
     while i < f.params.len() {
@@ -293,7 +300,7 @@ def exports_render_fn(f: Stmt) -> str {
 # JSON metadata for the functions declared in the entry file; imported modules are excluded
 # because a binding generator can only export the compilation unit's own symbols.
 public def exports_render(stmts: @List[Stmt], src_path: str) -> str {
-    out = "{\n  \"format\": 1,\n  \"source\": " + json_escape(src_path) + ",\n  \"functions\": ["
+    out = "{\n  \"format\": 2,\n  \"source\": " + json_escape(src_path) + ",\n  \"functions\": ["
     any_fn = False
     i = 0
     while i < stmts.len() {

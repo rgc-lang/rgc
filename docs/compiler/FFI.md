@@ -1,7 +1,7 @@
 # FFI 与 pyrgc —— C 互操作与 Python 绑定
 
-> 状态：v0.3（Phase 10 首批落地 + vectorcall 胶水 + str 所有权）
-> 组成：编译器 `extern def`（C ABI 外部函数声明）+ `--emit-exports`（签名/所有权元数据）+ `pyrgc` 官方 Python 绑定框架（CPython C API）
+> 状态：v0.4（`export def` 宿主导出标记 + vectorcall 胶水 + str 所有权）
+> 组成：编译器 `extern def`（C ABI 外部函数声明）、`export def`（宿主运行时导出标记）与 `--emit-exports`（签名/所有权元数据），外加 `pyrgc` 官方 Python 绑定框架（CPython C API）
 
 ---
 
@@ -51,7 +51,7 @@ def main() {
 |------|------|
 | `--emit-object` | 只生成目标文件（`.o`），不链接（pyrgc 构建流程使用） |
 | `--shared` | 链接为共享库（Unix：`g++ -shared -fPIC`；Windows：`g++ -shared`，函数带 LLVM `dllexport`），供 pyrgc / 插件场景使用 |
-| `--emit-exports <json>` | 额外写出入口文件全部顶层函数的签名与 `str` 返回值所有权分类（绑定生成器使用） |
+| `--emit-exports <json>` | 额外写出入口文件全部顶层函数的签名、`export` 标记与 `str` 返回值所有权分类（绑定生成器使用） |
 
 RGC 输出的目标文件是 PIC（位置无关），可直接参与共享库链接。
 
@@ -63,16 +63,40 @@ Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`�
 `--emit-llvm` 可以同时使用，也不受后端崩溃影响：
 
 ```json
-{"format": 1, "source": "examples/pyrgc_demo.rg",
- "functions": [{"name": "greet", "public": true,
+{"format": 2, "source": "examples/pyrgc_demo.rg",
+ "functions": [{"name": "greet", "public": false, "export": true,
                 "params": [{"name": "name", "type": "str"}],
                 "ret": "str", "str_ret": "owned"}]}
 ```
 
-签名由编译器发布而不是让绑定生成器用正则去刮源码：类型解析、默认值、
+签名与导出标记都由编译器发布，而不是让绑定生成器用正则去刮源码：类型解析、默认值、
 `@`/`@var` 借用前缀都只有编译器知道，两边各写一份解析器必然失同步。
 
-### 1.3 字符串拼接的临时缓冲区
+### 1.3 export def：把函数交给宿主运行时
+
+`export` 是声明修饰符（上下文关键字，不是保留字），标出宿主运行时的绑定生成器
+可以包装的函数：
+
+```python
+export def add(a: int, b: int) -> int {
+    return a + b
+}
+
+public export def greet(name: str) -> str {
+    return "hello, " + name + "!"
+}
+```
+
+- `export` 与 `public` 正交：`public` 是 RGC 模块之间的可见性，`export` 是宿主
+  运行时的可见性，两者各自独立、也可同时出现。这正是 PyO3 里 `pub fn` 与
+  `#[pyfunction]` 的分工——只有带标记的函数才会被包装给 Python。
+- 标记由编译器理解，并作为 `"export": true/false` 写进 `--emit-exports` 元数据；
+  绑定生成器只读元数据，不扫描源码，也就不存在“标记写法变了、扫描器没跟上”。
+- 它只影响元数据，不改变生成代码：没有宿主运行时消费时，`export def` 与
+  `def` 生成的程序完全一致。RGC 标准库因此不需要任何 pyrgc 运行时模块。
+- 导出名即 RGC 函数名。
+
+### 1.4 字符串拼接的临时缓冲区
 
 `str` 是裸 `malloc` 缓冲区且 RGC 无 GC，链式 `a + b + c` 会为每个 `+`
 分配一个缓冲区，但只有最外层的那个会逃逸出表达式。代码生成在字节拷贝完成后
@@ -104,32 +128,26 @@ Windows 上 `--shared` 会给编译单元内定义的函数加 LLVM `dllexport`�
 ### 2.1 RGC 侧
 
 ```python
-# examples/pyrgc_demo.rg
-import pyrgc
-
-public def add(a: int, b: int) -> int {
+# examples/pyrgc_demo.rg — export def 标出要包装给 Python 的函数
+export def add(a: int, b: int) -> int {
     return a + b
 }
 
-public def greet(name: str) -> str {
+export def greet(name: str) -> str {
     return "hello, " + name + "!"
 }
 
-public def is_even(n: int) -> bool {
+export def is_even(n: int) -> bool {
     return n % 2 == 0
 }
-
-# pybind11: PYBIND11_MODULE(demo, m) { m.def("add", &add); ... }
-pyrgc.export("add")
-pyrgc.export("greet")
-pyrgc.export("is_even")
-# 指定不同名：pyrgc.export("py_add", "add")
 ```
 
 - 导出函数必须写在**入口文件**且带**显式类型注解**（胶水需要 C 签名）。
-- `pyrgc.export("名")` 是编译期标记（顶层语句不参与代码生成），
-  由 pyrgc 构建器静态扫描，**决定导出哪些函数**；签名与类型则来自
-  `--emit-exports` 元数据，两边不重复解析源码。运行时为空操作。
+- `export` 是编译器理解的声明修饰符（见 §1.3），pyrgc 只消费
+  `--emit-exports` 元数据里的 `"export": true` 函数；签名与类型同样来自元数据，
+  两边不重复解析源码。
+- `export` 不引入任何运行时依赖：RGC 标准库里没有 pyrgc 模块，
+  `import pyrgc` 这类为标记而存在的空函数也不存在。
 - 支持的导出类型：`int` / `float` / `bool` / `str` / `None`。
 
 ### 2.2 安装、构建与使用
@@ -204,7 +222,7 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
 `owned`（堆破坏）。分支与 `match` 的各个出口分别求分类再合并，
 只要有一个出口不是 `owned`，整体就是 `unknown`。
 
-拼接链内部的中间缓冲区由编译器自己释放（见 §1.3），不计入这里的分类；
+拼接链内部的中间缓冲区由编译器自己释放（见 §1.4），不计入这里的分类；
 分类只描述**最外层**那个逃逸出来的缓冲区。
 
 ### 2.5 当前限制（v0.3）
@@ -215,15 +233,15 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
   改成返回拼接结果即为 `owned`，不再泄漏。
 - 无关键字参数、默认值参数；无 `PyErr` 异常传播（RGC 错误建议返回
   `Result` 并在 RGC 层处理）。
-- `pyrgc.export("py 名", "rgc 函数名")` 改名导出时，两函数的签名必须
-  ABI 兼容（胶水按被导出函数的 C 签名声明）。
+- 导出名固定为 RGC 函数名，暂不支持改名导出（PyO3 对应 `#[pyo3(name = ...)]`）。
+- 只包装带 `export` 标记的函数；没标记的同名顶层函数不会出现在模块里。
 
 ### 2.6 pyrgc 包结构
 
 | 文件 | 说明 |
 |------|------|
 | `pyrgc/pyproject.toml` | PEP 621 元数据 + `pyrgc` console script |
-| `pyrgc/pyrgc/shim.py` | `pyrgc.export` 扫描、`--emit-exports` 元数据解析、vectorcall C 胶水生成（含 docstring 与所有权分类） |
+| `pyrgc/pyrgc/shim.py` | `--emit-exports` 元数据解析（只取 `"export": true` 函数）、vectorcall C 胶水生成（含 docstring 与所有权分类） |
 | `pyrgc/pyrgc/builder.py` | 构建编排、`[tool.pyrgc]` 发现与解析 |
 | `pyrgc/pyrgc/scaffold.py` | `pyrgc new` 项目模板 |
 | `pyrgc/pyrgc/cli.py` | `new` / `build` / `develop` / `--version` |
@@ -247,9 +265,9 @@ RGC 无 GC，`str` 是裸 `malloc` 缓冲区，因此函数返回的指针可能
 | 组件 | 路径 |
 |------|------|
 | extern def 语法/检查/IR | `src/src/{parser,sema,ir}.rg`（`is_extern` / `fn_is_extern`） |
+| `export def` 语法与元数据 | `src/src/{parser,ast,exports}.rg`（`is_export`） |
 | `--emit-object` / `--shared` / `--emit-exports` | `src/src/main.rg` |
 | 导出元数据与 str 所有权分析 | `src/src/exports.rg` |
 | 拼接临时缓冲区释放 | `src/src/ir.rg`（`irg_codegen_binary` / `irg_is_temp_concat`） |
-| pyrgc 运行时模块 | `lib/pyrgc.rg` |
 | pyrgc Python 包（构建器/CLI/脚手架） | `pyrgc/`（`pip install -e pyrgc/`） |
 | 示例 | `examples/ffi.rg`、`examples/pyrgc_demo.rg` |

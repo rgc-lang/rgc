@@ -155,6 +155,7 @@ public class Stmt {
     module_is_std: bool
     is_public: bool
     is_extern: bool       # extern def: a C-ABI external function declaration (no body)
+    is_export: bool       # export def: offered to a host runtime's binding generator (see --emit-exports)
     type_params: List[str]
     type_param_bounds: List[str]
     interfaces: List[str]
@@ -384,6 +385,7 @@ public def make_expr_stmt(expr: Expr, line: int, col: int) -> Stmt {
     s.module_is_std = False
     s.is_public = False
     s.is_extern = False
+    s.is_export = False
     s.type_params = List[str]()
     s.type_param_bounds = List[str]()
     s.interfaces = List[str]()
